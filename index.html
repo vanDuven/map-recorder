@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/openlayers/openlayers.github.io@master/en/v6.8.1/css/ol.css"
+    />
+    <link rel="stylesheet" href="main.css" type="text/css" />
+    <script src="https://cdn.jsdelivr.net/gh/openlayers/openlayers.github.io@master/en/v6.8.1/build/ol.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2.3.19/dist/zip-fs-full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.6.2/dist/chart.min.js"></script>
+    <script src="lib/chartjs-plugin-dragdata/chartjs-plugin-dragdata.js"></script>
+
+    <title>Map Recorder</title>
+  </head>
+
+  <body>
+    <div id="container1">
+      <div class="control-general margin-top-s margin-bottom-m">
+        <div class="control-general-inputs margin-bottom-s border-bottom">
+          <div class="input-wrapper">
+            <span>width</span>
+            <input type="number" id="renWidthIn" spellcheck="false" required />
+          </div>
+
+          <div class="input-wrapper">
+            <span>height</span>
+            <input type="number" id="renHeightIn" spellcheck="false" required />
+          </div>
+
+          <div class="input-wrapper">
+            <span>frames</span>
+            <input
+              type="number"
+              id="framesDurationIn"
+              spellcheck="false"
+              required
+            />
+          </div>
+
+          <div class="input-wrapper">
+            <span>frames/s</span>
+            <input
+              type="number"
+              id="frames_sIn"
+              valuspellcheck="false"
+              required
+            />
+          </div>
+        </div>
+
+        <div class="control-general-inputs">
+          <div class="control-general-container">
+            <span>Marker</span>
+            <div class="control-general-container-items">
+              <div class="mainButton" id="addMarker">Add</div>
+              <div class="mainButton" id="moveMarker">Move</div>
+              <div class="mainButton" id="delMarker">Delete</div>
+            </div>
+          </div>
+          <div class="control-general-container">
+            <span>Add</span>
+            <div class="control-general-container-items">
+              <div class="mainButton" id="add-source">GeoJSON</div>
+            </div>
+          </div>
+          <div class="control-general-container">
+            <span>Export</span>
+            <div class="control-general-container-items">
+              <div id="downloadButton" class="mainButton">Export</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="containerMaps">
+        <div id="containerMap">
+          <div id="meerOpties"></div>
+          <div id="map" class="map"></div>
+
+          <div class="control-general-inputs">
+            <div class="input-wrapper">
+              <span>zoom</span>
+              <input
+                type="number"
+                id="zoomIn"
+                spellcheck="false"
+                style="width: 50px"
+                required
+              />
+            </div>
+
+            <div class="input-wrapper">
+              <span>Long</span>
+              <input type="number" id="xIn" spellcheck="false" required />
+            </div>
+
+            <div class="input-wrapper">
+              <span>Lat</span>
+              <input type="number" id="yIn" spellcheck="false" required />
+            </div>
+
+            <div class="input-wrapper">
+              <span class="tooltip">
+                rotation
+                <span class="tooltip-text">Alt+Shift+Drag</span>
+              </span>
+              <input
+                type="number"
+                id="rotationIn"
+                spellcheck="false"
+                required
+              />
+            </div>
+
+            <div class="input-wrapper">
+              <span>search</span>
+              <div id="searchCont">
+                <input type="text" id="searchIn" spellcheck="false" required />
+              </div>
+            </div>
+          </div>
+        </div>
+        <canvas class="previewCanvas"></canvas>
+      </div>
+      <div id="rendercontainerMap">
+        <div id="rendermap" class="map rendermap"></div>
+      </div>
+      <div class="control-general margin-bottom-s">
+        <div class="control-general-inputs middle">
+          <div class="mainButton" id="play">Play</div>
+          <div class="mainButton" id="previewButton">Preview render</div>
+          <div class="mainButton" id="previewSwitch">Preview Frame: single</div>
+        </div>
+      </div>
+
+      <div class="chartWrapper">
+        <div class="value-pannel margin-bottom-m"></div>
+        <div class="control-wrapper">
+          <canvas class="control-pannel"></canvas>
+          <div class="chartAreaWrapper">
+            <div class="chart-container" id="chartContainer">
+              <div class="chart-axes-control"></div>
+              <canvas id="chart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="main.js"></script>
+  </body>
+</html>
