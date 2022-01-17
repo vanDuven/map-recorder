@@ -5,6 +5,8 @@ Make simple map tile animations and export it as an image sequence.
 
 ![Map Animation](docs/rec.gif)
 
+Saves trackpoints and import them in Adobe After Effects: File > Scripts > Run Script File
+
 ### Built with
 
 - [OpenLayers](https://openlayers.org/)

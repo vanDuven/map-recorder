@@ -1,52 +1,55 @@
 let chartSizeDict = { beg: 110, add: false, init: false };
-let greyoutDiv;
-let playButton = document.getElementById("play");
+let greyoutDiv, renderHandlerDiv;
 
-let container1 = document.getElementById("container1");
+const playButton = document.getElementById("play");
 
-let mapDOM = document.getElementById("map");
-let mapRenDOM = document.getElementById("mapRen");
+const container1 = document.getElementById("container1");
 
-let downloadButton = document.getElementById("downloadButton");
-let sourceButton = document.getElementById("add-source");
+const mapDOM = document.getElementById("map");
+const mapRenDOM = document.getElementById("mapRen");
 
-let previewSwitchButton = document.getElementById("previewSwitch");
-let previewButton = document.getElementById("previewButton");
+const downloadButton = document.getElementById("downloadButton");
+const sourceButton = document.getElementById("add-source");
+const trackButton = document.getElementById("add-trackPoint");
 
-let zoomInput = document.getElementById("zoomIn");
-let xInput = document.getElementById("xIn");
-let yInput = document.getElementById("yIn");
+const previewSwitchButton = document.getElementById("previewSwitch");
+const previewButton = document.getElementById("previewButton");
 
-let searchInput = document.getElementById("searchIn");
-let framesDurationInput = document.getElementById("framesDurationIn");
-let frames_sInput = document.getElementById("frames_sIn");
+const zoomInput = document.getElementById("zoomIn");
+const xInput = document.getElementById("xIn");
+const yInput = document.getElementById("yIn");
 
-let rotationInput = document.getElementById("rotationIn");
+const searchInput = document.getElementById("searchIn");
+const framesDurationInput = document.getElementById("framesDurationIn");
+const frames_sInput = document.getElementById("frames_sIn");
 
-let infoId = document.getElementById("info-id");
-let addButton = document.getElementById("addMarker");
-let moveButton = document.getElementById("moveMarker");
-let delButton = document.getElementById("delMarker");
+const rotationInput = document.getElementById("rotationIn");
 
-let renWidthInput = document.getElementById("renWidthIn");
-let renHeightInput = document.getElementById("renHeightIn");
+const infoId = document.getElementById("info-id");
+const addButton = document.getElementById("addMarker");
+const moveButton = document.getElementById("moveMarker");
+const delButton = document.getElementById("delMarker");
 
-let previewCanvas = document.querySelector(".previewCanvas");
-let previewContext = previewCanvas.getContext("2d");
+const renWidthInput = document.getElementById("renWidthIn");
+const renHeightInput = document.getElementById("renHeightIn");
 
-let valuePannel = document.querySelector(".value-pannel");
+const previewCanvas = document.querySelector(".previewCanvas");
+const previewContext = previewCanvas.getContext("2d");
 
-let canvSel = document.querySelector(".control-pannel");
-let canvSelCtx = canvSel.getContext("2d");
+const valuePannel = document.querySelector(".value-pannel");
+
+const canvSel = document.querySelector(".control-pannel");
+const canvSelCtx = canvSel.getContext("2d");
 
 const canvWrapper = document.querySelector(".chartAreaWrapper");
-let canvCon = document.getElementById("chartContainer");
-let canv = document.getElementById("chart");
+const canvCon = document.getElementById("chartContainer");
+const canv = document.getElementById("chart");
+const ctx = canv.getContext("2d");
+
 let orgCanvWidth = null,
   orgCanvHeight = null;
-let ctx = canv.getContext("2d");
 
-let resizeEW = document.querySelector(".chart-axes-control");
+const resizeEW = document.querySelector(".chart-axes-control");
 
 const rootStyle = getComputedStyle(document.querySelector(":root"));
 
@@ -54,11 +57,15 @@ let viewT = new ol.View({
   center: ol.proj.fromLonLat([12.471555531078746, 41.87993470000001]),
   constrainRotation: false,
   zoom: 4,
+  multiWorld: true,
+  showFullExtent:true
 });
 let viewR = new ol.View({
   center: [0, 0],
   constrainRotation: false,
   zoom: 4,
+  multiWorld: true,
+  showFullExtent:true
 });
 
 const styleChart = {
@@ -233,6 +240,7 @@ let layersDict = {
     map: null,
     line: null,
     bez: { point: null, lines: null },
+    track: null,
   },
   source: {
     size: 0,
@@ -280,6 +288,99 @@ function rgbtoHex(rgb) {
   );
 }
 
+function aeScriptCamera(res, firstF, s_frame) {
+  this._firstF = firstF;
+  this._position = res.map((x) => x / 2);
+  this._positionLast = this._position;
+  this._center = this._firstF.center;
+  this._scale = 100 / this._firstF.zoom;
+  this._s_frame = s_frame / 1000;
+
+  this._trackPos = [];
+  this.trackLists = [];
+
+  this.begin = "var addTrackpoints = function() {\n";
+
+  this.timeList = "var timeList = [";
+  this.positionList = "var positionList = ";
+  this.scaleList = "var scaleList = [";
+  this.scaleRotation = "var RotationList = [";
+
+  this.mainFunction =
+    'var activeComp = app.project.activeItem;\
+  \nif(activeComp && activeComp instanceof CompItem){\
+  \napp.beginUndoGroup("Add trackpoint nulls");\
+  \nvar time_frame = 1/activeComp.frameRate;\
+  \nfor(var l = 0; l< positionList.length; l++){\
+  \nvar nullPoint = activeComp.layers.addNull();\
+  \nnullPoint.name = "Trackpoint " + l;\
+  \nfor(var s = 0; s< timeList.length; s++){\
+  \nvar newKeyTime = timeList[s]*time_frame;\
+  \nnullPoint.transform.position.setValueAtTime(newKeyTime,positionList[l][s]);\
+  \nnullPoint.transform.scale.setValueAtTime(newKeyTime,scaleList[s]);\
+  \nnullPoint.transform.rotation.setValueAtTime(newKeyTime,RotationList[s]);\
+  \n}\
+  \n}\
+  \napp.endUndoGroup();\
+  \n}\
+  \n}';
+
+  this.end = "\naddTrackpoints();\
+  \naddTrackpoints = null;";
+
+  this._trackPos.push(this._center);
+  for (let fea of layersDict["lay"]["track"].getSource().getFeatures()) {
+    this._trackPos.push(fea.getGeometry().getCoordinates());
+  }
+
+  this.trackLists = new Array(this._trackPos.length);
+  for (let t = 0; t < this.trackLists.length; ++t)
+    this.trackLists[t] = new Array(0);
+
+  this.addTime = function (val) {
+    this.timeList += String(val) + ",";
+  };
+
+  this.addPosition = function () {
+    for (let t = 0; t < this._trackPos.length; t++) {
+      this.trackLists[t].push(
+        mapRender.getPixelFromCoordinate(this._trackPos[t])
+      );
+    }
+  };
+
+  this.addScale = function (val) {
+    const scale = this._scale * val;
+    this.scaleList += JSON.stringify([scale, scale]) + ",";
+  };
+
+  this.addRotation = function (val) {
+    this.scaleRotation += String(val * (180 / Math.PI)) + ",";
+  };
+
+  this.check = function (val) {
+    let valList = val;
+    if (valList.endsWith(",")) {
+      valList = valList.slice(0, valList.length - 1);
+    }
+    return valList + "];\n";
+  };
+
+  this.whole = function () {
+    return (
+      this.begin +
+      this.positionList +
+      JSON.stringify(this.trackLists) +
+      "\n" +
+      this.check(this.timeList) +
+      this.check(this.scaleList) +
+      this.check(this.scaleRotation) +
+      this.mainFunction +
+      this.end
+    );
+  };
+}
+
 class TimeSequence {
   constructor(opts) {
     this.opts = {
@@ -319,6 +420,9 @@ class TimeSequence {
     this.calcwholeTimeout = null;
     this.waitDrawInterval = null;
     this.exportNewTimeout = null;
+
+    this.ae_script_camera = "";
+
     this.queue = {
       _parent: this,
       _groupNum: 0,
@@ -341,8 +445,15 @@ class TimeSequence {
       },
 
       removeGroup(gr) {
-        this._list.splice(this._list.indexOf(gr), 1);
-        delete this._groups[gr];
+        let res = false;
+
+        const ind = this._list.indexOf(gr);
+        if (ind >= 0) {
+          this._list.splice(ind, 1);
+          delete this._groups[gr];
+          res = true;
+        }
+        return res;
       },
 
       add(gr, v) {
@@ -357,8 +468,9 @@ class TimeSequence {
         }
       },
       stop(gr) {
-        this.removeGroup(gr);
-        this.next();
+        if (this.removeGroup(gr)) {
+          this.next();
+        }
       },
       change(gr, v) {
         try {
@@ -375,7 +487,6 @@ class TimeSequence {
         }
       },
       deleteAll() {
-        this._groupNum = 0;
         this._groups = {};
         this._list = [];
       },
@@ -415,6 +526,7 @@ class TimeSequence {
     this.seq = { data: {}, length: 0, frames: [] };
     this.queue.deleteAll();
   }
+
   calcStart() {
     this.clear();
     let arr = [];
@@ -427,6 +539,7 @@ class TimeSequence {
     if (arr.length === 0) return false;
     else return true;
   }
+
   calcSeq() {
     if (!this.calcStart()) return false;
     let dataset;
@@ -599,6 +712,7 @@ class TimeSequence {
     this.calcWhole();
     return true;
   }
+
   calcWhole(extendSeq = false) {
     let duration, step, frameA;
     let totalF = 0;
@@ -615,11 +729,6 @@ class TimeSequence {
         frameCopy = JSON.parse(JSON.stringify(layset["frames"][0]));
 
         frameCopy.change = false;
-        if ("attribution" in frameCopy && "changeRot" in frameCopy) {
-          if (frameCopy.attribution !== "" || frameCopy.changeRot !== false) {
-            frameCopy.change = true;
-          }
-        }
 
         frameCopy.type = "copy";
 
@@ -643,11 +752,6 @@ class TimeSequence {
           JSON.stringify(layset["frames"][layset["frames"].length - 1])
         );
         frameCopy.change = false;
-        if ("attribution" in frameCopy && "changeRot" in frameCopy) {
-          if (frameCopy.attribution !== "" || frameCopy.changeRot !== false) {
-            frameCopy.change = true;
-          }
-        }
 
         frameCopy.type = "copy";
 
@@ -675,12 +779,6 @@ class TimeSequence {
           JSON.stringify(layset["frames"][layset["frames"].length - 1])
         );
         frameCopy.change = false;
-        if ("attribution" in frameCopy && "changeRot" in frameCopy) {
-          if (frameCopy.attribution !== "" || frameCopy.changeRot !== false) {
-            frameCopy.change = true;
-          }
-        }
-
         frameCopy.type = "copy";
 
         frameA = totalF - layset["frames"].length;
@@ -702,6 +800,7 @@ class TimeSequence {
       this.seq["frames"] = new Array(totalF).fill(null);
     } else {
       totalF = end + 1;
+      if (Object.keys(this.seq["data"]).length === 0) totalF = 0;
 
       this.seq["frames"].length = totalF;
       this.seq["frames"].fill(null, this.seq["length"]);
@@ -824,33 +923,32 @@ class TimeSequence {
 
   renderStartMarker(mode = "render") {
     this.zipIndex = {};
-    this.zipIndex["root"] = new zip.fs.FS();
-    this.zipIndex["root-merge"] =
-      this.zipIndex["root"].addDirectory("merge").id;
+
+    this.exportN++;
+    const num = this.exportN;
+    const rootN = `root_${num}`;
+
+    this.zipIndex[rootN] = new zip.fs.FS();
+    this.zipIndex[`${rootN}-merge`] =
+      this.zipIndex[rootN].addDirectory("merge").id;
+
     if (mode === "render_all") {
-      let i = 0,
-        me = this;
-      Array.prototype.forEach.call(
-        document.querySelectorAll(".ol-layer-export canvas"),
-        (can) => {
-          if (can.width > 0) {
-            let name = "layer" + i;
-            me.zipIndex[`root-${name}`] =
-              me.zipIndex["root"].addDirectory(name).id;
-            i++;
-          }
-        }
-      );
+      for (let d = 1, l = chartT.data.datasets.length; d < l; d++) {
+        if (chartT.data.datasets[d].use === false) continue;
+
+        let name = chartDict["indexToName"][String(d)];
+        this.zipIndex[`${rootN}-${name}`] =
+          this.zipIndex[rootN].addDirectory(name).id;
+      }
     }
 
     if (this.play) this.cancelPreview();
-    this.exportN++;
+
     if (!this.calcSeq()) {
-      container1.style["pointer-events"] = "auto";
-      document.body.removeChild(greyoutDiv);
+      removeFog();
       return;
     }
-    this.exportSeq(mode, this.exportN, 0, "singleSeq");
+    this.exportSeq(mode, num, 0, "singleSeq");
   }
 
   previewStartMarker(opt = "") {
@@ -948,6 +1046,9 @@ class TimeSequence {
         }
       }
       if (change === false) {
+        let copyList = new Array(keysLength);
+        for (let z = 0; z < keysLength; z++) copyList[z] = new Array(0);
+
         for (let z = 0, d = keysLength; z < d; z++) {
           key = keys[z];
           cur = this.seq["data"][key]["frames"][i];
@@ -956,8 +1057,7 @@ class TimeSequence {
             let l_st = b_st + cur.total;
             for (; b_st < l_st; b_st++) {
               if (this.seq["frames"][b_st]) {
-                beginCopy = this.seq["frames"][b_st];
-                break;
+                copyList[z].push(b_st);
               }
             }
           } else if (cur.type === "copy") {
@@ -965,32 +1065,69 @@ class TimeSequence {
             let l_st = b_st + cur.total;
             for (; b_st < l_st; b_st++) {
               if (this.seq["frames"][b_st]) {
-                beginCopy = this.seq["frames"][b_st];
-                break;
+                copyList[z].push(b_st);
               }
             }
           }
-          if (beginCopy) break;
+        }
+        let ctemp = null,
+          count;
+        if (keysLength > 0) {
+          for (let z1 of copyList[0]) {
+            count = 1;
+            for (let d2 = 1; d2 < keysLength; d2++) {
+              for (let z2 of copyList[d2]) {
+                if (z2 > z1) break;
+                if (z1 === z2) {
+                  count++;
+                  break;
+                }
+              }
+            }
+            if (count === keysLength) {
+              ctemp = z1;
+              break;
+            }
+          }
+        }
+        if (ctemp !== null) {
+          beginCopy = this.seq["frames"][ctemp];
+        }
+        if (beginCopy) {
+          this.seq["frames"][i] = beginCopy;
+          this.progressBarDraw(chartT);
         }
       }
-      if (beginCopy) {
-        this.seq["frames"][i] = beginCopy;
-        this.progressBarDraw(chartT);
-      }
     }
+    let camera = null;
+    if (this.seq["data"].hasOwnProperty("map")) {
+      camera = new aeScriptCamera(
+        this.renderRes,
+        this.seq["data"]["map"]["frames"][0],
+        this.s_frame
+      );
+    }
+
+    let listLayers = [];
+    for (let d = 1, l = chartT.data.datasets.length; d < l; d++) {
+      if (chartT.data.datasets[d].use === false) continue;
+      listLayers.push(chartDict["indexToName"][String(d)]);
+    }
+
     let groupNum = this.queue.addGroup({
       mode: mode,
       keys: keys,
       keysLength: keysLength,
       beginCopy: beginCopy,
       mes: mes,
+      listLayers: listLayers,
+      camera: camera,
       num: num,
       end: n,
     });
 
     for (n; i < n; i++) {
       this.queue.add(groupNum, i);
-      continue;
     }
   }
 
@@ -1004,7 +1141,19 @@ class TimeSequence {
   }
 
   async exportPreview(v) {
-    let { mode, keys, keysLength, beginCopy, mes, _name, num, end } = v[0];
+    let {
+      mode,
+      keys,
+      keysLength,
+      beginCopy,
+      mes,
+      listLayers,
+      _name,
+      camera,
+      num,
+      end,
+    } = v[0];
+
     let i = v[1];
     let change = false;
 
@@ -1020,23 +1169,39 @@ class TimeSequence {
     }
 
     let exportOpt = {},
+      changeSwitch,
       key,
       cur;
     for (let z = 0, d = keysLength; z < d; z++) {
+      changeSwitch = false;
+
       key = keys[z];
       cur = this.seq["data"][key]["frames"][i];
       if (cur.change === true || beginCopy === null) {
         change = true;
-        Object.assign(exportOpt, await this.functionSwitch(key, cur));
+        changeSwitch = true;
+        await this.functionSwitch(key, cur);
       }
+      Object.assign(exportOpt, this.imageSettings(key, cur, changeSwitch));
     }
+
     beginCopy = true;
     if (change) {
       mes = await this.export_img(mode, exportOpt);
     }
-    if (this.exportN === num) {
-      this.seq["frames"][i] = mes;
+
+    if (mes == null || mes == undefined) {
+      this.queue.next();
+      return;
     }
+
+    if (this.exportN !== num) {
+      this.queue.stop(_name);
+      return;
+    }
+
+    this.seq["frames"][i] = mes;
+
     this.progressBarDraw(chartT);
     this.imageLoad = i;
     if (i < end - 1) {
@@ -1047,11 +1212,29 @@ class TimeSequence {
   }
 
   async exportRender(v) {
-    let { mode, keys, keysLength, beginCopy, mes, _name, num, end } = v[0];
+    let {
+      mode,
+      keys,
+      keysLength,
+      beginCopy,
+      mes,
+      listLayers,
+      _name,
+      camera,
+      num,
+      end,
+    } = v[0];
+
     let i = v[1];
     let change = false;
 
+    if (this.exportN !== num) {
+      this.queue.stop(_name);
+      return;
+    }
+
     let exportOpt = {},
+      changeSwitch,
       key,
       cur;
     for (let z = 0, d = keysLength; z < d; z++) {
@@ -1059,34 +1242,71 @@ class TimeSequence {
       cur = this.seq["data"][key]["frames"][i];
       if (cur.change === true || beginCopy === null) {
         change = true;
-        Object.assign(exportOpt, await this.functionSwitch(key, cur));
+        changeSwitch = true;
+        await this.functionSwitch(key, cur);
       }
+      Object.assign(exportOpt, this.imageSettings(key, cur, changeSwitch));
     }
+
+    exportOpt["listLayers"] = listLayers;
+
     beginCopy = true;
     if (change) {
       mes = await this.export_img(mode, exportOpt);
     }
-    this.seq["frames"][i] = true;
 
     let stringName = i.toString();
     let nameImg =
       "Frame_" + ("0".repeat(4 - stringName.length) + stringName) + ".png";
+
     for (let x of mes) {
-      await this.zipIndex["root"]
-        .getById(this.zipIndex[`root-${x.name}`])
+      if (x.data == null || x.data == undefined) {
+        this.queue.next();
+        return;
+      }
+    }
+
+    const rootN = `root_${num}`;
+    for (let x of mes) {
+      if (this.exportN !== num) {
+        this.queue.stop(_name);
+        return;
+      }
+
+      await this.zipIndex[rootN]
+        .getById(this.zipIndex[`${rootN}-${x.name}`])
         .addHttpContent(nameImg, x.data);
     }
+
+    this.seq["frames"][i] = true;
 
     this.progressBarDraw(chartT);
     this.imageLoad = i;
 
+    if (camera) {
+      if (change) {
+        camera.addTime(i);
+        camera.addScale(this.seq["data"]["map"]["frames"][i].zoom);
+        camera.addRotation(this.seq["data"]["map"]["frames"][i].rotation);
+        camera.addPosition();
+      }
+    }
+
     if (i < end - 1) {
+      if (this.exportN !== num) {
+        this.queue.stop(_name);
+        return;
+      }
+
       this.queue.change(_name, { beginCopy: beginCopy, mes: mes });
       this.queue.end(_name, i);
     } else if (i === end - 1) {
+      if (camera)
+        this.zipIndex[rootN].addText("Trackpoints.jsx", camera.whole());
+
       const link = document.createElement("a");
       const blobURL = await URL.createObjectURL(
-        await this.zipIndex["root"].exportBlob()
+        await this.zipIndex[rootN].exportBlob()
       );
       link.href = blobURL;
       link.download = "map.zip";
@@ -1096,15 +1316,28 @@ class TimeSequence {
       this.progressBarDraw(chartT);
       this.queue.stop(_name);
 
-      container1.style["pointer-events"] = "auto";
-      document.body.removeChild(greyoutDiv);
+      removeFog();
       this.zipIndex = {};
     }
   }
 
+  imageSettings(ch, opt, change) {
+    let exportOpt = {};
+    switch (chartDict[ch]) {
+      case "map":
+        if (change === true) exportOpt["zoom"] = true;
+
+        exportOpt["attribution"] = opt["attribution"];
+        if (opt["changeRot"]) exportOpt["changeRot"] = true;
+        break;
+      case "geo":
+        break;
+    }
+    return exportOpt;
+  }
+
   functionSwitch(ch, opt) {
     return new Promise((resolve) => {
-      let exportOpt = {};
       let layern = chartDict[ch];
       switch (layern) {
         case "map":
@@ -1120,10 +1353,6 @@ class TimeSequence {
                 layersDict["lay"]["xyz_ren"].getSource().refresh();
             }
           }
-
-          exportOpt["attribution"] = opt["attribution"];
-          exportOpt["zoom"] = true;
-          if (opt["changeRot"]) exportOpt["changeRot"] = true;
           break;
 
         case "geo":
@@ -1137,8 +1366,9 @@ class TimeSequence {
               opt["opacitystroke"]
             )
           );
+          break;
       }
-      resolve(exportOpt);
+      resolve();
     });
   }
 
@@ -1151,6 +1381,8 @@ class TimeSequence {
       mapCanvasFinal,
       mapFinalContext,
       mapContextRender,
+      canvasBlank,
+      listLayers = [],
       allLay = false,
       rot = false,
       lurl;
@@ -1158,8 +1390,13 @@ class TimeSequence {
     if (!exportOpt.hasOwnProperty("zoom")) {
       _scaleView = 1;
     }
+
     if (exportOpt.hasOwnProperty("changeRot")) {
       if (exportOpt.changeRot === true) rot = true;
+    }
+
+    if (exportOpt.hasOwnProperty("listLayers")) {
+      listLayers = exportOpt["listLayers"].slice(0);
     }
 
     return new Promise((resolve) => {
@@ -1234,10 +1471,14 @@ class TimeSequence {
                 );
                 mapContext.drawImage(canvas, 0, 0, newW, newH);
               }
-
               if (allLay) {
-                let name = "layer" + i;
-                i++;
+                let name = "temp";
+                for (let cl of canvas.parentNode.classList) {
+                  if (cl.startsWith("layer_")) {
+                    name = cl.replace("layer_", "");
+                    break;
+                  }
+                }
 
                 mapContextRender.globalAlpha = mapContext.globalAlpha;
 
@@ -1259,10 +1500,29 @@ class TimeSequence {
 
                 mapContext.setTransform(1, 0, 0, 1, 0, 0);
                 mapContext.clearRect(0, 0, newW, newH);
+
+                const ind = listLayers.indexOf(name);
+                if (ind !== -1) {
+                  listLayers.splice(ind, 1);
+                }
               }
             }
           }
         );
+
+        if (allLay) {
+          for (let x of listLayers) {
+            if (!canvasBlank) {
+              canvasBlank = document.createElement("canvas");
+              canvasBlank.width = newW;
+              canvasBlank.height = newH;
+            }
+            lurl.push({
+              data: canvasBlank.toDataURL("image/png"),
+              name: x,
+            });
+          }
+        }
 
         if (mode === "render_all") {
           mapCanvas = mapCanvasRender;
@@ -1278,7 +1538,7 @@ class TimeSequence {
           mapContext.font = 12 * frontScale + "px serif";
           mapContext.fillText(
             exportOpt["attribution"],
-            10,
+            10 * frontScale,
             (newH - 10) * frontScale
           );
         }
@@ -1330,30 +1590,35 @@ function previewHandler(e) {
   }
 }
 
+function removeFog() {
+  container1.style["pointer-events"] = "auto";
+
+  if (document.body.contains(greyoutDiv)) {
+    document.body.removeChild(greyoutDiv);
+  }
+  if (container1.contains(renderHandlerDiv)) {
+    container1.removeChild(renderHandlerDiv);
+  }
+}
+
 function renderHandler(e) {
-  const frame = document.createElement("div");
-  frame.className = "popup-sel";
-  frame.innerHTML = "Export layers:";
+  renderHandlerDiv = document.createElement("div");
+  renderHandlerDiv.className = "popup-sel";
+  const frameInnerText = document.createElement("span");
+  frameInnerText.innerHTML = "Export layers:";
 
   const buttRenAll = document.createElement("div");
   buttRenAll.innerHTML = "Merge and all layers";
   buttRenAll.className = "mainButton";
-  buttRenAll.onclick = (el) => {
-    container1.removeChild(frame);
-    timeseq.renderStartMarker("render_all");
-  };
 
   const buttRenMerge = document.createElement("div");
   buttRenMerge.innerHTML = "Merge";
   buttRenMerge.className = "mainButton";
-  buttRenMerge.onclick = (el) => {
-    container1.removeChild(frame);
-    timeseq.renderStartMarker("render");
-  };
 
-  frame.appendChild(buttRenAll);
-  frame.appendChild(buttRenMerge);
-  container1.appendChild(frame);
+  renderHandlerDiv.appendChild(frameInnerText);
+  renderHandlerDiv.appendChild(buttRenAll);
+  renderHandlerDiv.appendChild(buttRenMerge);
+  container1.appendChild(renderHandlerDiv);
 
   container1.style["pointer-events"] = "none";
   greyoutDiv = document.createElement("div");
@@ -1362,12 +1627,51 @@ function renderHandler(e) {
 
   const closeButton = document.createElement("button");
   closeButton.className = "closeButton";
-  closeButton.onclick = (el) => {
-    container1.removeChild(frame);
-    container1.style["pointer-events"] = "auto";
-    document.body.removeChild(greyoutDiv);
+
+  renderHandlerDiv.appendChild(closeButton);
+
+  this.waitFrame = function (opt) {
+    frameInnerText.innerHTML = "Rendering:";
+    renderHandlerDiv.removeChild(closeButton);
+    renderHandlerDiv.removeChild(buttRenAll);
+    renderHandlerDiv.removeChild(buttRenMerge);
+
+    const buttRestart = document.createElement("div");
+    buttRestart.innerHTML = "Restart";
+    buttRestart.className = "mainButton";
+
+    const buttAbort = document.createElement("div");
+    buttAbort.innerHTML = "Abort";
+    buttAbort.className = "mainButton";
+
+    renderHandlerDiv.appendChild(buttRestart);
+    renderHandlerDiv.appendChild(buttAbort);
+
+    buttRestart.onclick = () => {
+      timeseq.renderStartMarker(opt);
+    };
+
+    buttAbort.onclick = () => {
+      removeFog();
+      timeseq.exportNew();
+    };
+
+    timeseq.renderStartMarker(opt);
   };
-  frame.appendChild(closeButton);
+
+  buttRenAll.onclick = (el) => {
+    const opt = "render_all";
+    this.waitFrame(opt);
+  };
+
+  buttRenMerge.onclick = (el) => {
+    const opt = "render";
+    this.waitFrame(opt);
+  };
+
+  closeButton.onclick = (el) => {
+    removeFog();
+  };
 }
 
 function createStyleGeo(
@@ -1507,11 +1811,21 @@ map.on("click", function (e) {
         deselectChar();
         layersDict["lay"]["sel"].getSource().addFeature(sel);
         sel.setStyle(createStyleMid(true));
+      } else if (layerSel === "track") {
+        if (sel.get("name") === "track") {
+          deselectChar();
+          layersDict["lay"]["sel"].getSource().addFeature(sel);
+          sel.setStyle(createStyleTrack(true));
+        }
       }
     },
     {
       layerFilter: function (layer) {
-        return layer.get("title") === "map" || layer.get("title") === "bez";
+        return (
+          layer.get("title") === "map" ||
+          layer.get("title") === "bez" ||
+          layer.get("title") === "track"
+        );
       },
     }
   );
@@ -1813,6 +2127,9 @@ function deselectChar() {
     if (fea.get("layer") === "bez") {
       fea.setStyle(createStyleMid(false));
     }
+    if (fea.get("layer") === "track") {
+      fea.setStyle(createStyleTrack(false));
+    }
   }
   layersDict["lay"]["sel"].getSource().clear();
 
@@ -1959,6 +2276,8 @@ function translatingHandler(e) {
       }
     } else if (layer === "bez") {
       bezPoint(fea);
+    } else if (layer === "track") {
+      moveTrackpoint(fea);
     }
   }
 }
@@ -1984,6 +2303,8 @@ function deleteMarker(e) {
     if (fea.get("layer") === "bez") {
       removeMid(fea.get("parent"));
       setLine(fea.get("parent"));
+    } else if (fea.get("layer") === "track") {
+      deleteTrackPoint(fea);
     }
   }
 
@@ -2062,6 +2383,19 @@ function createStyleMid(sel = false) {
   });
 }
 
+function createStyleTrack(sel = false) {
+  let col = "purple";
+  if (sel) col = "blue";
+  return new ol.style.Style({
+    image: new ol.style.Circle({
+      radius: 4,
+      fill: new ol.style.Fill({
+        color: col,
+      }),
+    }),
+  });
+}
+
 function addLineMid(points) {
   let geomid = [
     (points[0][0] + points[1][0]) / 2,
@@ -2101,6 +2435,7 @@ function addLine(points, dataP) {
       points[1][1],
     mid: mid,
     parent: dataP,
+    layer: "line",
   });
   fea.setStyle(
     new ol.style.Style({
@@ -2248,7 +2583,7 @@ function bezPoint(fea) {
   if (fea.get("bez") === null) {
     let p = new ol.Feature({
       geometry: new ol.geom.MultiPoint(bezIntervals),
-      layer: "bezpoints",
+      layer: "line",
       name: "points",
     });
 
@@ -2349,34 +2684,6 @@ function checkAllLines() {
   }
 }
 
-function addAllLines() {
-  layersDict["lay"]["line"].getSource().clear();
-  layersDict["lay"]["bez"]["point"].getSource().clear();
-  let ch = "map";
-  let ind = chartDict["indexToData"][ch];
-  let nextN = sortedDict[ch]["start"];
-  let da1, da2, cm1, cm2;
-  for (let z = 0, d = chartT.data.datasets[ind].data.length; z < d; z++) {
-    for (let key of Object.keys(chartT.data.datasets[ind].data[z].lines)) {
-      chartT.data.datasets[ind].data[z].lines[key] = null;
-    }
-  }
-  for (let z = 0, d = chartT.data.datasets[ind].data.length; z < d; z++) {
-    da1 = chartT.data.datasets[ind].data[nextN];
-    nextN = da1.next;
-    if (nextN === null) continue;
-    da2 = chartT.data.datasets[ind].data[nextN];
-    cm1 = da1.indexmap;
-    cm2 = da2.indexmap;
-    let fea = addLine(
-      [cm1.getGeometry().getCoordinates(), cm2.getGeometry().getCoordinates()],
-      [da1, da2]
-    );
-    da1.lines.next = fea;
-    da2.lines.pre = fea;
-  }
-}
-
 class Sourceframe {
   constructor() {
     this.sourceSel;
@@ -2443,7 +2750,6 @@ class Sourceframe {
       title: "url",
       source: geojsonSource,
       opacity: 0.0,
-      renderMode: "vector",
     });
 
     layersDict["source"]["data"][nameL] = geojsonLayer;
@@ -2663,8 +2969,8 @@ class Githubframe {
 
   searchParams(e, arg) {
     if (e.type == "keyup") {
-      if (e.keyCode === 13) {
-        Object.assign(this.params, arg);
+      Object.assign(this.params, arg);
+      if (e.keyCode === 13) {        
         this.allFiles();
       }
     }
@@ -2922,7 +3228,6 @@ class FeatureTable {
       source: laySource,
       title: nameL,
       zIndex: num,
-      renderMode: "vector",
     });
 
     let laySourceR = new ol.source.Vector({
@@ -2934,7 +3239,6 @@ class FeatureTable {
       source: laySourceR,
       title: nameL,
       zIndex: num,
-      renderMode: "vector",
     });
 
     layersDict["lay"][nameL] = layLayer;
@@ -3035,6 +3339,24 @@ class FeatureTable {
 function creatElGeoSource() {
   new Sourceframe();
 }
+
+function createTrackPoint() {
+  let fea = new ol.Feature({
+    geometry: new ol.geom.Point(viewT.getCenter()),
+    name: `track`,
+    layer: "track",
+  });
+  fea.setStyle(createStyleTrack());
+  layersDict["lay"]["track"].getSource().addFeature(fea);
+}
+
+function moveTrackpoint(fea) {}
+
+function deleteTrackPoint(fea) {
+  layersDict["lay"]["track"].getSource().removeFeature(fea);
+  deselectChar();
+}
+
 function setAttributionText(text) {
   layersDict["lay"]["xyz"].getSource().setAttributions(text);
   layersDict["lay"]["xyz_ren"].getSource().setAttributions(text);
@@ -3810,7 +4132,6 @@ function optionlayer(opt = {}) {
 
 let chartT = new Chart(ctx, options);
 
-
 function zoomWheel(e) {
   e.preventDefault();
 
@@ -3832,7 +4153,6 @@ function zoomWheel(e) {
   chartT.resize();
 }
 
-
 function mouseDownEv(e) {
   last_resizepos = e.clientX;
   last_resizeX = chartT.options.scales.x.max;
@@ -3842,6 +4162,7 @@ function mouseDownEv(e) {
 }
 
 function setZlayers(val) {
+  layersDict["lay"]["track"].setZIndex(val);
   layersDict["lay"]["line"].setZIndex(val);
   layersDict["lay"]["bez"]["point"].setZIndex(val);
   layersDict["lay"]["map"].setZIndex(val + 1);
@@ -3927,6 +4248,8 @@ resizeEW.addEventListener("mousedown", mouseDownEv);
 previewButton.addEventListener("click", previewClick);
 previewSwitchButton.addEventListener("click", previewcalc);
 sourceButton.addEventListener("click", creatElGeoSource);
+trackButton.addEventListener("click", createTrackPoint);
+
 zoomInput.addEventListener("keyup", changeInput);
 xInput.addEventListener("keyup", changeInput);
 yInput.addEventListener("keyup", changeInput);
@@ -4007,6 +4330,16 @@ function main_start() {
     opacity: 0.0,
   });
 
+  let markerTrackSource = new ol.source.Vector({
+    features: [],
+  });
+
+  let markerTrackLayer = new ol.layer.Vector({
+    source: markerTrackSource,
+    title: "track",
+    zIndex: 1,
+  });
+
   let markerLineSource = new ol.source.Vector({
     features: [],
   });
@@ -4033,6 +4366,7 @@ function main_start() {
   layersDict["lay"]["map"] = markerTimeLayer;
   layersDict["lay"]["sel"] = markerSelectLayer;
   layersDict["lay"]["line"] = markerLineLayer;
+  layersDict["lay"]["track"] = markerTrackLayer;
   layersDict["lay"]["bez"]["point"] = markerbezLayer;
 
   map.addLayer(tileLayer);
@@ -4041,6 +4375,7 @@ function main_start() {
   map.addLayer(markerTimeLayer);
   map.addLayer(markerSelectLayer);
   map.addLayer(markerLineLayer);
+  map.addLayer(markerTrackLayer);
   map.addLayer(markerbezLayer);
 
   const translate = new ol.interaction.Translate({
