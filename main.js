@@ -1,5 +1,5 @@
 let chartSizeDict = { beg: 110, add: false, init: false };
-let greyoutDiv, renderHandlerDiv;
+let greyoutDiv, renderHandlerDiv, routeframeDiv, sourceframeDiv;
 
 const playButton = document.getElementById("play");
 
@@ -11,6 +11,7 @@ const mapRenDOM = document.getElementById("mapRen");
 const downloadButton = document.getElementById("downloadButton");
 const sourceButton = document.getElementById("add-source");
 const trackButton = document.getElementById("add-trackPoint");
+const routeButton = document.getElementById("add-route");
 
 const previewSwitchButton = document.getElementById("previewSwitch");
 const previewButton = document.getElementById("previewButton");
@@ -58,14 +59,14 @@ let viewT = new ol.View({
   constrainRotation: false,
   zoom: 4,
   multiWorld: true,
-  showFullExtent:true
+  showFullExtent: true,
 });
 let viewR = new ol.View({
   center: [0, 0],
   constrainRotation: false,
   zoom: 4,
   multiWorld: true,
-  showFullExtent:true
+  showFullExtent: true,
 });
 
 const styleChart = {
@@ -77,7 +78,6 @@ const styleChart = {
 };
 
 let scaleView = 1;
-let tickscale = 0;
 
 let last_resizepos = null;
 let last_resizeX = null;
@@ -265,6 +265,21 @@ const defaultLay = {
     color: [100, 0, 0],
     colorstroke: [0, 0, 0],
     opacitystroke: 1,
+    widthStroke: 1,
+  },
+  route: {
+    layer: "route",
+    name: "",
+    title: "",
+    colorstroke: [0, 0, 0],
+    opacitystroke: 1,
+    widthStroke: 1,
+    lineDash: [0, 0],
+    lineCap: "round",
+    lineJoin: "round",
+    lineDashOffset: 0,
+    start: 0,
+    end: 100,
   },
 };
 
@@ -330,7 +345,20 @@ function aeScriptCamera(res, firstF, s_frame) {
 
   this._trackPos.push(this._center);
   for (let fea of layersDict["lay"]["track"].getSource().getFeatures()) {
-    this._trackPos.push(fea.getGeometry().getCoordinates());
+    if (fea.get("name") === "track") {
+      this._trackPos.push(fea.getGeometry().getCoordinates());
+    }
+  }
+
+  for (let i = 0, d = chartT.data.datasets.length; i < d; i++) {
+    if (chartT.data.datasets[i].use === false) continue;
+
+    let ch = chartDict["indexToName"][i];
+    if (chartDict[ch] === "route") {
+      for (let x of chartT.data.datasets[i].waypoints) {
+        this._trackPos.push(x);
+      }
+    }
   }
 
   this.trackLists = new Array(this._trackPos.length);
@@ -550,11 +578,21 @@ class TimeSequence {
       ydiff = 0,
       zdiff = 0,
       strdiff = 0,
+      widthdiff = 0,
+      lineDashOffsetDiff = 0,
       rdiff = 0;
+
+    let tarOpstroke,
+      stOpstroke,
+      colDiff,
+      colStrokeDiff,
+      dashDiff,
+      stRouteDiff,
+      endRouteDiff;
 
     for (let i = 1, n = chartT.data.datasets.length; i < n; i++) {
       dataset = chartT.data.datasets[i];
-      if (dataset.data.length === 0) continue;
+      if (dataset.data.length === 0 || dataset.use === false) continue;
 
       let ch = chartDict["indexToName"][String(i)];
       let nextN = sortedDict[ch]["start"];
@@ -674,12 +712,21 @@ class TimeSequence {
             let tarO = da2.opacity;
             let stO = da1.opacity;
 
-            let stOpstroke = da1.opacitystroke;
+            stOpstroke = da1.opacitystroke;
 
             zdiff = (tarO - stO) * step;
             strdiff = (da2.opacitystroke - stOpstroke) * step;
+            widthdiff = (da2.widthStroke - da1.widthStroke) * step;
 
-            if (zdiff === 0 && strdiff === 0) {
+            colDiff = divideColor(da1.color, da2.color, step);
+            colStrokeDiff = divideColor(da1.colorstroke, da2.colorstroke, step);
+
+            if (
+              zdiff === 0 &&
+              strdiff === 0 &&
+              colDiff["change"] === false &&
+              colStrokeDiff["change"] === false
+            ) {
               change = false;
             }
 
@@ -688,8 +735,83 @@ class TimeSequence {
               this.seq["data"][ch]["frames"].push({
                 opacity: stO + zdiff * s,
                 opacitystroke: stOpstroke + strdiff * s,
-                color: da1.color,
-                colorstroke: da1.colorstroke,
+                color: da1.color.map((x, ind) =>
+                  Math.round(x + colDiff["list"][ind] * s)
+                ),
+                colorstroke: da1.colorstroke.map((x, ind) =>
+                  Math.round(x + colStrokeDiff["list"][ind] * s)
+                ),
+                widthStroke: da1.widthStroke + widthdiff * s,
+                change: change,
+                changeRot: false,
+                type: "step",
+                step: s,
+                total: l,
+              });
+            }
+
+            if (change === false) {
+              if (this.seq["data"][ch]["frames"].length > 0) {
+                let ind = this.seq["data"][ch]["frames"].length - s;
+                this.seq["data"][ch]["frames"][ind].change = true;
+              }
+            }
+
+            break;
+
+          case "route":
+            change = true;
+            let tarWidth = da2.widthStroke;
+            let stWidth = da1.widthStroke;
+
+            tarOpstroke = da2.opacitystroke;
+            stOpstroke = da1.opacitystroke;
+
+            widthdiff = (tarWidth - stWidth) * step;
+            strdiff = (tarOpstroke - stOpstroke) * step;
+
+            lineDashOffsetDiff =
+              (da2.lineDashOffset - da1.lineDashOffset) * step;
+
+            stRouteDiff = (da2.start - da1.start) * step;
+            endRouteDiff = (da2.end - da1.end) * step;
+            const divide = divideRoute(
+              dataset.route,
+              frameA,
+              [da1.start, da1.end],
+              [da2.start, da2.end]
+            );
+
+            dashDiff = divideDash(da1.lineDash, da2.lineDash, step);
+            colStrokeDiff = divideColor(da1.colorstroke, da2.colorstroke, step);
+
+            if (
+              strdiff === 0 &&
+              widthdiff === 0 &&
+              divide["change"] === false &&
+              dashDiff["change"] === false &&
+              colStrokeDiff["change"] === false
+            ) {
+              change = false;
+            }
+
+            s = 0;
+            for (let l = frameA; s < l; s++) {
+              this.seq["data"][ch]["frames"].push({
+                opacitystroke: stOpstroke + strdiff * s,
+                colorstroke: da1.colorstroke.map((x, ind) =>
+                  Math.round(x + colStrokeDiff["list"][ind] * s)
+                ),
+                widthStroke: stWidth + widthdiff * s,
+                route: divide["list"][s],
+                start: da1.start + stRouteDiff * s,
+                end: da1.end + endRouteDiff * s,
+                lineDash: dashDiff["st"].map(
+                  (x, ind) => x + dashDiff["list"][ind] * s
+                ),
+                lineCap: da1.lineCap,
+                lineJoin: da1.lineJoin,
+                lineDashOffset: da1.lineDashOffset + lineDashOffsetDiff * s,
                 change: change,
                 changeRot: false,
                 type: "step",
@@ -1131,6 +1253,14 @@ class TimeSequence {
     }
   }
 
+  checkStop(num, _name) {
+    if (this.exportN !== num) {
+      this.queue.stop(_name);
+      return true;
+    }
+    return false;
+  }
+
   exportMode(v) {
     if (!v) return;
     if (v[0].mode === "preview") {
@@ -1157,10 +1287,7 @@ class TimeSequence {
     let i = v[1];
     let change = false;
 
-    if (this.exportN !== num) {
-      this.queue.stop(_name);
-      return;
-    }
+    if (this.checkStop(num, _name)) return;
 
     if (this.seq["frames"][i]) {
       this.imageLoad = i;
@@ -1180,10 +1307,14 @@ class TimeSequence {
       if (cur.change === true || beginCopy === null) {
         change = true;
         changeSwitch = true;
+        if (this.checkStop(num, _name)) return;
+
         await this.functionSwitch(key, cur);
       }
       Object.assign(exportOpt, this.imageSettings(key, cur, changeSwitch));
     }
+
+    if (this.checkStop(num, _name)) return;
 
     beginCopy = true;
     if (change) {
@@ -1195,10 +1326,7 @@ class TimeSequence {
       return;
     }
 
-    if (this.exportN !== num) {
-      this.queue.stop(_name);
-      return;
-    }
+    if (this.checkStop(num, _name)) return;
 
     this.seq["frames"][i] = mes;
 
@@ -1228,10 +1356,7 @@ class TimeSequence {
     let i = v[1];
     let change = false;
 
-    if (this.exportN !== num) {
-      this.queue.stop(_name);
-      return;
-    }
+    if (this.checkStop(num, _name)) return;
 
     let exportOpt = {},
       changeSwitch,
@@ -1243,14 +1368,19 @@ class TimeSequence {
       if (cur.change === true || beginCopy === null) {
         change = true;
         changeSwitch = true;
+
+        if (this.checkStop(num, _name)) return;
+
         await this.functionSwitch(key, cur);
       }
       Object.assign(exportOpt, this.imageSettings(key, cur, changeSwitch));
     }
 
     exportOpt["listLayers"] = listLayers;
-
     beginCopy = true;
+
+    if (this.checkStop(num, _name)) return;
+
     if (change) {
       mes = await this.export_img(mode, exportOpt);
     }
@@ -1268,10 +1398,7 @@ class TimeSequence {
 
     const rootN = `root_${num}`;
     for (let x of mes) {
-      if (this.exportN !== num) {
-        this.queue.stop(_name);
-        return;
-      }
+      if (this.checkStop(num, _name)) return;
 
       await this.zipIndex[rootN]
         .getById(this.zipIndex[`${rootN}-${x.name}`])
@@ -1293,10 +1420,7 @@ class TimeSequence {
     }
 
     if (i < end - 1) {
-      if (this.exportN !== num) {
-        this.queue.stop(_name);
-        return;
-      }
+      if (this.checkStop(num, _name)) return;
 
       this.queue.change(_name, { beginCopy: beginCopy, mes: mes });
       this.queue.end(_name, i);
@@ -1331,6 +1455,7 @@ class TimeSequence {
         if (opt["changeRot"]) exportOpt["changeRot"] = true;
         break;
       case "geo":
+      case "route":
         break;
     }
     return exportOpt;
@@ -1338,7 +1463,9 @@ class TimeSequence {
 
   functionSwitch(ch, opt) {
     return new Promise((resolve) => {
+      let ind, cm;
       let layern = chartDict[ch];
+
       switch (layern) {
         case "map":
           viewR.setCenter(opt["center"]);
@@ -1356,14 +1483,33 @@ class TimeSequence {
           break;
 
         case "geo":
-          let ind = parseInt(chartDict["indexToData"][ch]);
-          let cm = chartT.data.datasets[ind].data[0].indexRen;
+          ind = parseInt(chartDict["indexToData"][ch]);
+          cm = chartT.data.datasets[ind].data[0].indexRen;
           cm.setStyle(
             createStyleGeo(
               opt["color"],
               opt["opacity"],
               opt["colorstroke"],
-              opt["opacitystroke"]
+              opt["opacitystroke"],
+              opt["widthStroke"]
+            )
+          );
+          break;
+
+        case "route":
+          ind = parseInt(chartDict["indexToData"][ch]);
+          cm = chartT.data.datasets[ind].data[0].indexRen;
+
+          cm.getGeometry().setCoordinates(opt["route"]);
+          cm.setStyle(
+            createStyleRoute(
+              opt["colorstroke"],
+              opt["opacitystroke"],
+              opt["widthStroke"],
+              opt["lineDash"],
+              opt["lineCap"],
+              opt["lineJoin"],
+              opt["lineDashOffset"]
             )
           );
           break;
@@ -1630,6 +1776,8 @@ function renderHandler(e) {
 
   renderHandlerDiv.appendChild(closeButton);
 
+  new moveEl(renderHandlerDiv);
+
   this.waitFrame = function (opt) {
     frameInnerText.innerHTML = "Rendering:";
     renderHandlerDiv.removeChild(closeButton);
@@ -1674,21 +1822,84 @@ function renderHandler(e) {
   };
 }
 
+function createStyleTableMap(sel = 0) {
+  const rgbSelcol = [65, 145, 134];
+  const rgbSelstroke = [65, 145, 134];
+
+  const rgbcol = [82, 64, 133];
+  const rgbstroke = [82, 64, 133];
+
+  const rgbClickcol = [109, 171, 212];
+  const rgbClickstroke = [109, 171, 212];
+
+  let widthStroke = sel == 0 ? 1 : 2;
+  let strokeC =
+    sel == 0
+      ? `rgba(${rgbstroke.toString()}, ${1})`
+      : sel == 1
+      ? `rgba(${rgbSelstroke.toString()}, ${1})`
+      : sel == 2
+      ? `rgba(${rgbClickstroke.toString()}, ${1})`
+      : false;
+
+  let newC =
+    sel == 0
+      ? `rgba(${rgbcol.toString()}, ${0.5})`
+      : sel == 1
+      ? `rgba(${rgbSelcol.toString()}, ${0.5})`
+      : sel == 2
+      ? `rgba(${rgbClickcol.toString()}, ${0.5})`
+      : false;
+
+  return new ol.style.Style({
+    stroke: new ol.style.Stroke({
+      color: strokeC,
+      width: widthStroke,
+    }),
+    fill: new ol.style.Fill({
+      color: newC,
+    }),
+  });
+}
+
 function createStyleGeo(
   colors = [255, 0, 0],
   opacity = 1,
   colstroke = [0, 0, 0],
-  opacitystroke = 1
+  opacitystroke = 1,
+  widthStroke = 1
 ) {
   let newC = `rgba(${colors[0]},${colors[1]},${colors[2]}, ${opacity} )`;
   let strokeC = `rgba(${colstroke[0]},${colstroke[1]},${colstroke[2]}, ${opacitystroke} )`;
   return new ol.style.Style({
     stroke: new ol.style.Stroke({
       color: strokeC,
-      width: 1,
+      width: widthStroke,
     }),
     fill: new ol.style.Fill({
       color: newC,
+    }),
+  });
+}
+
+function createStyleRoute(
+  colstroke = [0, 0, 0],
+  opacitystroke = 1,
+  widthStroke = 1,
+  lineDash = null,
+  lineCap = "round",
+  lineJoin = "round",
+  lineDashOffset = 0
+) {
+  let strokeC = `rgba(${colstroke[0]},${colstroke[1]},${colstroke[2]}, ${opacitystroke} )`;
+  return new ol.style.Style({
+    stroke: new ol.style.Stroke({
+      color: strokeC,
+      lineCap: lineCap,
+      lineJoin: lineJoin,
+      lineDashOffset: lineDashOffset,
+      lineDash: lineDash,
+      width: widthStroke,
     }),
   });
 }
@@ -1812,10 +2023,12 @@ map.on("click", function (e) {
         layersDict["lay"]["sel"].getSource().addFeature(sel);
         sel.setStyle(createStyleMid(true));
       } else if (layerSel === "track") {
+        deselectChar();
+        layersDict["lay"]["sel"].getSource().addFeature(sel);
         if (sel.get("name") === "track") {
-          deselectChar();
-          layersDict["lay"]["sel"].getSource().addFeature(sel);
           sel.setStyle(createStyleTrack(true));
+        } else if (sel.get("name") === "route") {
+          sel.setStyle(createStyleRouteMarker(true));
         }
       }
     },
@@ -1833,21 +2046,40 @@ map.on("click", function (e) {
 
 function selectChar(datasetIndex, index) {
   if (datasetIndex <= 0) return;
-  let layerSel = chartDict["indexToName"][String(datasetIndex)];
   let indSel = chartT.data.datasets[datasetIndex].data[index].indexmap;
 
   if (indSel == null || indSel == undefined) return;
-  let nameSel = indSel.get("name");
 
   switchHighlight([datasetIndex, index]);
 }
 
-class panValue {
-  constructor(opt) {
-    this.opt = opt;
-    this.curSel = null;
-    this.curDataset = 0;
-    this.curData = 0;
+function newStyle(cm, data, key) {
+  switch (key) {
+    case "geo":
+      cm.setStyle(
+        createStyleGeo(
+          data["color"],
+          data["opacity"],
+          data["colorstroke"],
+          data["opacitystroke"],
+          data["widthStroke"]
+        )
+      );
+      break;
+
+    case "route":
+      cm.setStyle(
+        createStyleRoute(
+          data["colorstroke"],
+          data["opacitystroke"],
+          data["widthStroke"],
+          data["lineDash"],
+          data["lineCap"],
+          data["lineJoin"],
+          data["lineDashOffset"]
+        )
+      );
+      break;
   }
 }
 
@@ -1858,8 +2090,11 @@ function inputHandler(e) {
 
   let data = chartT.data.datasets[curSelChar[0]].data[curSelChar[1]];
   let cm = data.indexmap;
-  let num, org;
-  switch (e.target.name) {
+  let num, org, val;
+
+  const name = e.target.name.split("_");
+
+  switch (name[0]) {
     case "x":
       if (isNaN(parseInt(e.target.value))) break;
 
@@ -1875,7 +2110,7 @@ function inputHandler(e) {
       if (isNaN(parseInt(e.target.value))) break;
       num = parseFloat(e.target.value);
       num = Math.max(Math.min(num, viewT.getMaxZoom()), viewT.getMinZoom());
-      data[e.target.name] = num;
+      data[name[0]] = num;
 
       moveMarkerLine(data);
       viewT.setZoom(num);
@@ -1924,59 +2159,39 @@ function inputHandler(e) {
     case "color":
       num = hextoRgb(e.target.value);
       if (num) {
-        data[e.target.name] = num;
-        cm.setStyle(
-          createStyleGeo(
-            num,
-            data["opacity"],
-            data["colorstroke"],
-            data["opacitystroke"]
-          )
-        );
+        data[name[0]] = num;
+        newStyle(cm, data, "geo");
       }
       break;
+
     case "colorstroke":
       num = hextoRgb(e.target.value);
       if (num) {
-        data[e.target.name] = num;
-        cm.setStyle(
-          createStyleGeo(
-            data["color"],
-            data["opacity"],
-            num,
-            data["opacitystroke"]
-          )
-        );
+        data[name[0]] = num;
+
+        newStyle(cm, data, name[1]);
       }
       break;
+
+    case "lineDashOffset":
     case "opacity":
       if (isNaN(parseInt(e.target.value))) break;
-      data[e.target.name] = parseFloat(e.target.value);
-      cm.setStyle(
-        createStyleGeo(
-          data["color"],
-          data["opacity"],
-          data["colorstroke"],
-          data["opacitystroke"]
-        )
-      );
+      data[name[0]] = parseFloat(e.target.value);
+      newStyle(cm, data, name[1]);
       break;
+
+    case "widthStroke":
     case "opacitystroke":
       if (isNaN(parseInt(e.target.value))) break;
-      data[e.target.name] = parseFloat(e.target.value);
-      cm.setStyle(
-        createStyleGeo(
-          data["color"],
-          data["opacity"],
-          data["colorstroke"],
-          data["opacitystroke"]
-        )
-      );
+      data[name[0]] = parseFloat(e.target.value);
+
+      newStyle(cm, data, name[1]);
+
       break;
 
     case "mapZ":
       if (isNaN(parseInt(e.target.value))) break;
-      let val = parseInt(e.target.value);
+      val = parseInt(e.target.value);
       chartT.data.datasets[curSelChar[0]].mapZ = val;
       data.xyz = val;
       let nameL = data.title;
@@ -1988,29 +2203,65 @@ function inputHandler(e) {
       }
       break;
 
+    case "trim":
+      if (isNaN(parseInt(e.target.value))) break;
+      val = Math.min(Math.max(parseInt(e.target.value), 0), 100);
+      e.target.value = val;
+
+      data[name[1]] = val;
+      break;
+    case "lineSelect":
+      data[name[1]] = e.target.value;
+      newStyle(cm, data, "route");
+      break;
+
+    case "lineDash":
+      try {
+        val = JSON.parse(`[${e.target.value}]`);
+        let allN = false;
+
+        if (Array.isArray(val)) {
+          allN = true;
+          for (let x of val) {
+            if (isNaN(x)) {
+              allN = false;
+              break;
+            }
+          }
+        }
+
+        if (allN) {
+          data[name[0]] = val;
+          newStyle(cm, data, "route");
+        } else {
+          break;
+        }
+      } catch (error) {
+        break;
+      }
+
+      break;
+
     default:
       if (isNaN(parseInt(e.target.value))) break;
-      data[e.target.name] = parseFloat(e.target.value);
+      data[name[0]] = parseFloat(e.target.value);
 
       break;
   }
 }
 
-function createInputDom(text, value, opt = "") {
+function createInputDom(text, value, nameKey = "") {
   let wrapEl = document.createElement("div");
   let spanEl = document.createElement("span");
   let inpEl = document.createElement("input");
-
-  wrapEl.appendChild(spanEl);
-  wrapEl.appendChild(inpEl);
-
-  valuePannel.appendChild(wrapEl);
 
   spanEl.innerHTML = text;
 
   let eventTrigger = "keyup";
 
-  switch (opt) {
+  const name = nameKey.split("_");
+
+  switch (name[0]) {
     case "attribution":
       spanEl.className = "tooltip";
       const tooltip = document.createElement("span");
@@ -2033,6 +2284,31 @@ function createInputDom(text, value, opt = "") {
       wrapEl.appendChild(datalist);
       break;
 
+    case "lineDash":
+      inpEl.value = value === null ? [0, 0].toString() : value.toString();
+      break;
+
+    case "lineSelect":
+      inpEl = document.createElement("select");
+      eventTrigger = "change";
+
+      const lineCapList =
+        name[1] === "lineCap"
+          ? ["butt", "round", "square"]
+          : name[1] === "lineJoin"
+          ? ["bevel", "round", "miter"]
+          : [];
+
+      for (let x of lineCapList) {
+        const opt = document.createElement("option");
+        if (value === x) opt.selected = "selected";
+
+        opt.value = x;
+        opt.innerHTML = x;
+        inpEl.appendChild(opt);
+      }
+      break;
+
     case "colorstroke":
     case "color":
       inpEl.type = "color";
@@ -2046,7 +2322,12 @@ function createInputDom(text, value, opt = "") {
       break;
   }
 
-  inpEl.name = opt;
+  wrapEl.appendChild(spanEl);
+  wrapEl.appendChild(inpEl);
+
+  valuePannel.appendChild(wrapEl);
+
+  inpEl.name = nameKey;
   inpEl.addEventListener(eventTrigger, inputHandler);
 
   wrapEl.className = "input-wrapper";
@@ -2096,19 +2377,58 @@ function highlightSel() {
       break;
 
     case "geo":
+      newStyle(cm, data, "geo");
+
+      createInputDom("Frame", data.x, "x");
+      createInputDom("Opacity", data["opacity"], "opacity_geo");
+      createInputDom("Color", data["color"], "color");
+      createInputDom("Stroke color", data["colorstroke"], "colorstroke_geo");
+      createInputDom(
+        "Stroke opacity",
+        data["opacitystroke"],
+        "opacitystroke_geo"
+      );
+      createInputDom("Stroke width", data["widthStroke"], "widthStroke_geo");
+      createInputDom(
+        "zIndex",
+        chartT.data.datasets[curSelChar[0]].mapZ,
+        "mapZ"
+      );
+      break;
+
+    case "route":
       cm.setStyle(
-        createStyleGeo(
-          data["color"],
-          data["opacity"],
+        createStyleRoute(
           data["colorstroke"],
-          data["opacitystroke"]
+          data["opacitystroke"],
+          data["widthStroke"],
+          data["lineDash"],
+          data["lineCap"],
+          data["lineJoin"],
+          data["lineDashOffset"]
         )
       );
       createInputDom("Frame", data.x, "x");
-      createInputDom("Opacity", data["opacity"], "opacity");
-      createInputDom("Color", data["color"], "color");
-      createInputDom("Stroke color", data["colorstroke"], "colorstroke");
-      createInputDom("Stroke opacity", data["opacitystroke"], "opacitystroke");
+      createInputDom("Stroke color", data["colorstroke"], "colorstroke_route");
+      createInputDom(
+        "Stroke opacity",
+        data["opacitystroke"],
+        "opacitystroke_route"
+      );
+      createInputDom("Stroke width", data["widthStroke"], "widthStroke_route");
+
+      createInputDom("Trim start", data["start"], "trim_start");
+      createInputDom("Trim end", data["end"], "trim_end");
+
+      createInputDom("Line dash", data["lineDash"], "lineDash");
+      createInputDom("Line cap", data["lineCap"], "lineSelect_lineCap");
+      createInputDom("Line join", data["lineJoin"], "lineSelect_lineJoin");
+      createInputDom(
+        "Line DashOffset",
+        data["lineDashOffset"],
+        "lineDashOffset_route"
+      );
+
       createInputDom(
         "zIndex",
         chartT.data.datasets[curSelChar[0]].mapZ,
@@ -2128,7 +2448,11 @@ function deselectChar() {
       fea.setStyle(createStyleMid(false));
     }
     if (fea.get("layer") === "track") {
-      fea.setStyle(createStyleTrack(false));
+      if (fea.get("name") === "track") {
+        fea.setStyle(createStyleTrack(false));
+      } else if (fea.get("name") === "route") {
+        fea.setStyle(createStyleRouteMarker(false));
+      }
     }
   }
   layersDict["lay"]["sel"].getSource().clear();
@@ -2217,6 +2541,7 @@ function addFromPanel(ch) {
     case "map":
       addMarker();
       break;
+    case "route":
     case "geo":
       let index = parseInt(chartDict["indexToData"][ch]);
       let last_x = 0,
@@ -2238,8 +2563,23 @@ function addFromPanel(ch) {
         org.indexRen
       );
 
+      let changes = {};
       for (let op of Object.keys(defaultLay[chartDict[ch]])) {
-        data[op] = JSON.parse(JSON.stringify(org[op]));
+        try {
+          if (timeseq.seq.data[ch].frames[data.x].hasOwnProperty(op)) {
+            changes[op] = JSON.parse(
+              JSON.stringify(timeseq.seq.data[ch].frames[data.x][op])
+            );
+          } else {
+            throw true;
+          }
+        } catch (error) {
+          changes[op] = JSON.parse(JSON.stringify(org[op]));
+        }
+      }
+
+      for (let op in changes) {
+        data[op] = changes[op];
       }
 
       break;
@@ -2277,7 +2617,13 @@ function translatingHandler(e) {
     } else if (layer === "bez") {
       bezPoint(fea);
     } else if (layer === "track") {
-      moveTrackpoint(fea);
+      if (fea.get("name") === "track") {
+        moveTrackpoint(fea);
+      } else if (fea.get("name") === "route") {
+        if (routeframeDiv) {
+          routeframeDiv.moveMarker(fea);
+        }
+      }
     }
   }
 }
@@ -2299,12 +2645,24 @@ function deleteMarker(e) {
   if (e.type == "keyup") {
     if (e.keyCode != 46) return;
   }
+
+  deleteHandler();
+}
+
+function deleteHandler() {
   for (let fea of layersDict["lay"]["sel"].getSource().getFeatures()) {
     if (fea.get("layer") === "bez") {
       removeMid(fea.get("parent"));
       setLine(fea.get("parent"));
     } else if (fea.get("layer") === "track") {
-      deleteTrackPoint(fea);
+      if (fea.get("name") === "track") {
+        deleteTrackPoint(fea);
+      } else if (fea.get("name") === "route") {
+        if (routeframeDiv) {
+          deselectChar();
+          routeframeDiv.delInputFromFeature(fea);
+        }
+      }
     }
   }
 
@@ -2363,7 +2721,7 @@ function deleteMarker(e) {
   }
 
   curSel = [null];
-  rearrangeData(curSelChar[0], curSelChar[1]);
+  rearrangeData(curSelChar[0]);
   curSelChar = [];
   deselectChar();
   chartT.resize();
@@ -2389,6 +2747,19 @@ function createStyleTrack(sel = false) {
   return new ol.style.Style({
     image: new ol.style.Circle({
       radius: 4,
+      fill: new ol.style.Fill({
+        color: col,
+      }),
+    }),
+  });
+}
+
+function createStyleRouteMarker(sel = false) {
+  let col = "green";
+  if (sel) col = "blue";
+  return new ol.style.Style({
+    image: new ol.style.Circle({
+      radius: 6,
       fill: new ol.style.Fill({
         color: col,
       }),
@@ -2686,18 +3057,18 @@ function checkAllLines() {
 
 class Sourceframe {
   constructor() {
-    this.sourceSel;
+    this.sourceSel = "head";
     this.frames = {};
-    this.frames["github_page_source"] = null;
+    this.frames["github_page_source"] = { frame: null, map: false, opt: {} };
 
     this.head = document.createElement("div");
-    this.head.className = "geosorce-sel";
+    this.head.className = "geosource-sel";
 
     this.frame = document.createElement("div");
-    this.frame.className = "geosorce-sel-frame";
+    this.frame.className = "geosource-sel-frame";
 
     this.filesEl = document.createElement("div");
-    this.filesEl.className = "geosorce-sel-files";
+    this.filesEl.className = "geosource-sel-files";
 
     this.closeButton = document.createElement("button");
     this.closeButton.className = "closeButton";
@@ -2706,17 +3077,20 @@ class Sourceframe {
     };
 
     this.addjsonfile = document.createElement("button");
+    this.addjsonfile.className = "mainButton mini";
     this.addjsonfile.innerHTML = "add GeoJSON file";
     this.addjsonfile.onclick = () => {
       this.frameFromJson();
     };
 
     this.addjsonGithub = document.createElement("button");
+    this.addjsonGithub.className = "mainButton mini";
     this.addjsonGithub.innerHTML = "add GeoJSON from github";
     this.addjsonGithub.onclick = () => {
-      this.sourceSel = "github_page_source";
-      this.newframe();
+      this.newframe("github_page_source");
     };
+
+    new moveEl(this.head);
 
     this.head.appendChild(this.closeButton);
     this.head.appendChild(this.frame);
@@ -2729,7 +3103,61 @@ class Sourceframe {
   }
 
   close() {
+    this.checkMapVisibility(0);
     this.head.remove();
+  }
+
+  open() {
+    this.checkMapVisibility(1);
+    this.optFunc();
+
+    container1.appendChild(this.head);
+  }
+
+  backFrame(child) {
+    this.checkMapVisibility(0);
+
+    this.sourceSel = "head";
+    this.head.removeChild(child.head);
+    this.head.appendChild(this.frame);
+  }
+
+  checkMapVisibility(type = 0) {
+    if (type === 0) {
+      for (let x in this.frames) {
+        if (this.frames[x].map) {
+          layersDict["source"]["data"][x].setOpacity(0);
+          layersDict["source"]["data"][x].setVisible(false);
+        }
+      }
+    } else if (type === 1) {
+      if (this.frames.hasOwnProperty(this.sourceSel)) {
+        if (this.frames[this.sourceSel].map) {
+          layersDict["source"]["data"][this.sourceSel].setOpacity(1);
+          layersDict["source"]["data"][this.sourceSel].setVisible(true);
+        }
+      }
+    }
+    if (this.frames.hasOwnProperty(this.sourceSel)) {
+      if (this.frames[this.sourceSel].map) {
+        for (let i = 1, n = chartT.data.datasets.length; i < n; i++) {
+          if (
+            chartT.data.datasets[i].data.length === 0 ||
+            chartT.data.datasets[i].use === false
+          )
+            continue;
+
+          let ch = chartDict["indexToName"][String(i)];
+          if (chartDict[ch] === "geo") {
+            let vis =
+              type === 0 ? true : type === 1 ? false : type === 3 ? true : true;
+            layersDict["lay"][chartT.data.datasets[i].data[0].title].setVisible(
+              vis
+            );
+          }
+        }
+      }
+    }
   }
 
   addSource(url, name = "") {
@@ -2744,12 +3172,16 @@ class Sourceframe {
       format: new ol.format.GeoJSON(),
     });
 
+    const styleT = createStyleTableMap(0);
+
     let geojsonLayer = new ol.layer.Vector({
       sourcename: nameL,
       filename: nameFile,
       title: "url",
       source: geojsonSource,
       opacity: 0.0,
+      style: styleT,
+      visible: true,
     });
 
     layersDict["source"]["data"][nameL] = geojsonLayer;
@@ -2817,23 +3249,44 @@ class Sourceframe {
     });
   }
 
-  newframe() {
+  optFunc() {
+    if (this.frames.hasOwnProperty(this.sourceSel)) {
+      for (let x in this.frames[this.sourceSel].opt) {
+        this.frames[this.sourceSel].opt[x].func(
+          this.frames[this.sourceSel].opt[x].arg
+        );
+      }
+    }
+  }
+
+  newframe(newSource = null) {
+    if (newSource !== null) this.sourceSel = newSource;
+
     this.frame.remove();
     let change = false;
     if (this.frames.hasOwnProperty(this.sourceSel)) {
-      if (this.frames[this.sourceSel]) {
+      if (this.frames[this.sourceSel]["frame"]) {
         change = true;
       }
     }
+
     if (change) {
-      this.head.appendChild(this.frames[this.sourceSel].frame);
+      this.head.appendChild(this.frames[this.sourceSel]["frame"].frame);
     } else {
+      this.frames[this.sourceSel] = { frame: null, map: false, opt: {} };
+
       if (this.sourceSel === "github_page_source") {
-        this.frames[this.sourceSel] = new Githubframe(this);
+        this.frames[this.sourceSel]["frame"] = new Githubframe(this);
       } else {
-        this.frames[this.sourceSel] = new FeatureTable(this, this.sourceSel);
+        this.frames[this.sourceSel]["map"] = true;
+        this.frames[this.sourceSel]["frame"] = new FeatureTable(
+          this,
+          this.sourceSel
+        );
       }
     }
+    this.checkMapVisibility(1);
+    this.optFunc();
   }
 }
 
@@ -2851,9 +3304,10 @@ class Githubframe {
     };
 
     this.head = document.createElement("div");
-    this.head.className = "geosorce-sel-frame";
+    this.head.className = "geosource-sel-frame";
 
     this.backButton = document.createElement("button");
+    this.backButton.className = "mainButton mini";
     this.backButton.innerHTML = "back";
     this.backButton.onclick = () => {
       this.backFrame();
@@ -2970,7 +3424,7 @@ class Githubframe {
   searchParams(e, arg) {
     if (e.type == "keyup") {
       Object.assign(this.params, arg);
-      if (e.keyCode === 13) {        
+      if (e.keyCode === 13) {
         this.allFiles();
       }
     }
@@ -2995,8 +3449,7 @@ class Githubframe {
   }
 
   backFrame() {
-    this.parent.head.removeChild(this.head);
-    this.parent.head.appendChild(this.parent.frame);
+    this.parent.backFrame(this);
   }
 }
 
@@ -3005,46 +3458,68 @@ class FeatureTable {
     this.parent = parent;
     this.source = source;
 
+    this.loaded = false;
+
     this.selFeatures = [];
     this.selElements = [];
     this.rowElements = [];
+    this.keys = [];
 
     this.features = [];
     this.geojsonSource = layersDict["source"]["data"][this.source].getSource();
 
     this.timekey;
 
+    this.mapFeature = [];
+    Object.assign(this.parent.frames[this.source].opt, {
+      seeGeo: { func: this.seeGeo.bind(this), arg: true },
+    });
+
     this.createButton = document.createElement("button");
+    this.createButton.className = "mainButton mini";
     this.createButton.innerHTML = "create";
     this.createButton.onclick = () => {
       this.createSel();
     };
 
     this.unSelectAllButton = document.createElement("button");
+    this.unSelectAllButton.className = "mainButton mini";
     this.unSelectAllButton.innerHTML = "deselect";
     this.unSelectAllButton.onclick = () => {
       this.deSelect();
     };
 
     this.SelectAllButton = document.createElement("button");
+    this.SelectAllButton.className = "mainButton mini";
     this.SelectAllButton.innerHTML = "select all";
     this.SelectAllButton.onclick = () => {
       this.selectAll();
     };
 
     this.backButton = document.createElement("button");
+    this.backButton.className = "mainButton mini";
     this.backButton.innerHTML = "back";
     this.backButton.onclick = () => {
       this.backFrame();
     };
 
+    this.seeGeoButton = document.createElement("button");
+    this.seeGeoButton.className = "mainButton mini";
+    this.seeGeoButton.innerHTML = "view added layers: on";
+    this.seeGeoButton.onclick = () => {
+      const arg = !this.parent.frames[this.source].opt.seeGeo.arg;
+      this.parent.frames[this.source].opt.seeGeo.arg = arg;
+      this.seeGeo(this.parent.frames[this.source].opt.seeGeo.arg);
+    };
+
     this.head = document.createElement("div");
-    this.head.className = "geosorce-sel-frame";
+    this.head.className = "geosource-sel-frame";
     this.parent.head.appendChild(this.head);
 
     this.head.appendChild(this.createButton);
     this.head.appendChild(this.SelectAllButton);
     this.head.appendChild(this.unSelectAllButton);
+    this.head.appendChild(this.seeGeoButton);
     this.head.appendChild(this.backButton);
 
     this.start();
@@ -3052,6 +3527,43 @@ class FeatureTable {
 
   get frame() {
     return this.head;
+  }
+
+  displayFromMap(e) {
+    if (e.dragging) {
+      return;
+    }
+    const pixel = map.getEventPixel(e.originalEvent);
+    const nameL = this.source;
+    let i = null;
+    const clicked = e.type === "click" ? true : false;
+
+    map.forEachFeatureAtPixel(
+      pixel,
+      (sel) => {
+        i = sel.get("row");
+        return;
+      },
+      {
+        layerFilter: function (layer) {
+          if (layer.get("title") === "url") {
+            if (layer.get("sourcename") === nameL) {
+              return true;
+            }
+          }
+        },
+      }
+    );
+
+    this.hoverEl("map", i, clicked);
+  }
+
+  fromMap() {
+    const bindFunction = this.displayFromMap.bind(this);
+
+    layersDict["source"]["data"][this.source].setOpacity(1);
+    map.on("pointermove", bindFunction);
+    map.on("click", bindFunction);
   }
 
   createTable() {
@@ -3101,53 +3613,32 @@ class FeatureTable {
       tr = table.insertRow(-1);
       this.rowElements.push(tr);
 
+      this.features[i].set("row", i);
+
+      tr.setAttribute("data-featureRow", i);
+
+      tr.onmouseover = (e) => {
+        this.hoverEl(e.type, i);
+      };
+      tr.onclick = (e) => {
+        this.hoverEl(e.type, i);
+      };
+
       for (let x = 0, z = keys.length; x < z; x++) {
         td = tr.insertCell(-1);
         text = this.features[i].get([keys[x]]);
         if (typeof text !== "string" && typeof text !== "number") text = "";
         td.innerHTML = String(text);
-
-        td.onclick = (el) => {
-          if (el.target.parentNode.classList.toggle("select")) {
-            const ind_selElements = this.selElements.length;
-            const ind_selFeatures = this.selFeatures.length;
-
-            this.selElements.push(el.target.parentNode);
-            this.selFeatures.push(this.features[i]);
-
-            el.target.parentNode.setAttribute(
-              "data-ind_selElements",
-              ind_selElements
-            );
-            el.target.parentNode.setAttribute(
-              "data-ind_selFeatures",
-              ind_selFeatures
-            );
-          } else {
-            let ind_selElements = el.target.parentNode.getAttribute(
-              "data-ind_selElements"
-            );
-            let ind_selFeatures = el.target.parentNode.getAttribute(
-              "data-ind_selFeatures"
-            );
-
-            if (ind_selElements !== null && ind_selFeatures !== null) {
-              ind_selElements = parseInt(ind_selElements);
-              ind_selFeatures = parseInt(ind_selFeatures);
-
-              delete this.selElements[ind_selElements];
-              delete this.selFeatures[ind_selFeatures];
-
-              el.target.parentNode.removeAttribute("data-ind_selElements");
-              el.target.parentNode.removeAttribute("data-ind_selFeatures");
-            }
-          }
-        };
       }
     }
 
+    this.keys = keys;
+
+    this.fromMap();
+
     tableCont.appendChild(table);
     this.head.appendChild(tableCont);
+    this.loaded = true;
   }
 
   keyInput(e) {
@@ -3174,26 +3665,84 @@ class FeatureTable {
     }
   }
 
-  createSel() {
-    if (this.selFeatures.length === 0) return;
+  selectEl(el, i) {
+    if (el.classList.toggle("select")) {
+      const ind_selElements = this.selElements.length;
+      const ind_selFeatures = this.selFeatures.length;
 
-    let multiGeo = [],
-      fea = null;
+      this.selElements.push(el);
+      this.selFeatures.push(this.features[i]);
 
-    for (let i = 0, d = this.selFeatures.length; i < d; i++) {
-      if (this.selFeatures[i]) {
-        multiGeo.push(this.selFeatures[i].getGeometry());
-        if (fea === null) fea = this.selFeatures[i].clone();
+      el.setAttribute("data-ind_selElements", ind_selElements);
+      el.setAttribute("data-ind_selFeatures", ind_selFeatures);
+
+      if (el.classList.contains("hover-map")) {
+        el.classList.remove("hover-map");
+      }
+      this.features[i].setStyle(createStyleTableMap(2));
+    } else {
+      let ind_selElements = el.getAttribute("data-ind_selElements");
+      let ind_selFeatures = el.getAttribute("data-ind_selFeatures");
+
+      if (ind_selElements !== null && ind_selFeatures !== null) {
+        ind_selElements = parseInt(ind_selElements);
+        ind_selFeatures = parseInt(ind_selFeatures);
+
+        delete this.selElements[ind_selElements];
+        delete this.selFeatures[ind_selFeatures];
+
+        el.removeAttribute("data-ind_selElements");
+        el.removeAttribute("data-ind_selFeatures");
+
+        this.features[i].setStyle(createStyleTableMap(0));
+      }
+    }
+  }
+
+  hoverEl(tableT, i, clickmap = false) {
+    let selInd = false,
+      popIt;
+    let clicked = tableT === "click" ? true : clickmap;
+
+    if (i !== null) {
+      if (clicked) {
+        this.selectEl(this.rowElements[i], i);
+      }
+      const cl = this.rowElements[i].classList;
+
+      if (!cl.contains("hover-map")) {
+        if (!cl.contains("select")) {
+          cl.add("hover-map");
+          this.features[i].setStyle(createStyleTableMap(1));
+          selInd = i;
+          this.mapFeature.push(selInd);
+        }
+      }
+    }
+    while (this.mapFeature.length) {
+      popIt = this.mapFeature.pop();
+      if (popIt !== i) {
+        const cl = this.rowElements[popIt].classList;
+        if (cl.contains("hover-map")) {
+          cl.remove("hover-map");
+          this.features[popIt].setStyle(createStyleTableMap(0));
+        }
+      } else {
+        selInd = popIt;
       }
     }
 
-    if (fea === null) return;
-
-    fea.setGeometry(new ol.geom.GeometryCollection(multiGeo));
-    this.addLayerfromTable(fea);
+    if (selInd !== false) {
+      this.mapFeature.push(selInd);
+    }
   }
 
-  addLayerfromTable(ff) {
+  createSel() {
+    if (this.selFeatures.length === 0) return;
+    this.addLayerfromTable(mergeFeatures(this.selFeatures));
+  }
+
+  addLayerfromTable(ff, opt = {}) {
     let num = Object.keys(chartDict["indexToName"]).length;
     let nameL = `layer${num + 1}`;
     layersDict["chart"]["size"]++;
@@ -3258,7 +3807,7 @@ class FeatureTable {
       numD,
       1 - (layersDict["chart"]["size"] - 1) * 2,
       ff,
-      defaultLay["geo"],
+      Object.assign({}, defaultLay["geo"], opt),
       ffRen
     );
 
@@ -3272,7 +3821,8 @@ class FeatureTable {
         data["color"],
         data["opacity"],
         data["colorstroke"],
-        data["opacitystroke"]
+        data["opacitystroke"],
+        data["widthStroke"]
       )
     );
 
@@ -3286,8 +3836,11 @@ class FeatureTable {
   deSelect() {
     for (let i = 0, d = this.selElements.length; i < d; i++) {
       if (this.selElements[i]) {
-        if (this.selElements[i].classList.toggle("select")) {
-          this.selElements[i].classList.toggle("select");
+        if (this.selElements[i].classList.contains("select")) {
+          this.selectEl(
+            this.selElements[i],
+            this.selElements[i].getAttribute("data-featureRow")
+          );
         }
       }
     }
@@ -3296,23 +3849,21 @@ class FeatureTable {
   }
 
   selectAll() {
-    this.deSelect();
     for (let i = 0, d = this.rowElements.length; i < d; i++) {
       if (this.rowElements[i].style.display === "none") continue;
 
-      if (!this.rowElements[i].classList.toggle("select")) {
-        this.rowElements[i].classList.toggle("select");
+      if (!this.rowElements[i].classList.contains("select")) {
+        this.selectEl(this.rowElements[i], i);
       }
-
-      const ind_selElements = this.selElements.length;
-      const ind_selFeatures = this.selFeatures.length;
-
-      this.selElements.push(this.rowElements[i]);
-      this.selFeatures.push(this.features[i]);
-
-      this.rowElements[i].setAttribute("data-ind_selElements", ind_selElements);
-      this.rowElements[i].setAttribute("data-ind_selFeatures", ind_selFeatures);
     }
+  }
+
+  seeGeo(arg) {
+    let vis = arg === true ? 3 : 1;
+    let innerT = arg === true ? "on" : "off";
+    this.seeGeoButton.innerHTML = "view added layers: " + innerT;
+
+    this.parent.checkMapVisibility(vis);
   }
 
   start() {
@@ -3331,13 +3882,595 @@ class FeatureTable {
   }
 
   backFrame() {
-    this.parent.head.removeChild(this.head);
-    this.parent.head.appendChild(this.parent.frame);
+    this.parent.backFrame(this);
+  }
+}
+
+class coordInput {
+  constructor(parent, num, elNum) {
+    this.parent = parent;
+
+    this._num = num;
+    this._elNum = elNum;
+
+    this._feature = null;
+    this._id = `searchCont_${this._elNum}`;
+
+    this.head = document.createElement("div");
+    this.head.className = "routeControl";
+
+    this.inpCont = document.createElement("div");
+    this.inpCont.className = "searchCont";
+    this.inpCont.id = this._id;
+
+    this.inpEl = document.createElement("input");
+
+    this.inpEl.spellcheck = false;
+    this.inpEl.setAttribute("data-order", this._num);
+    this.inpEl.addEventListener("keyup", (el) => {
+      this.changeInput(el);
+    });
+
+    this.orderContainer1 = document.createElement("div");
+    this.orderContainer1.className = "orderContainer";
+
+    this.mapB = document.createElement("div");
+    this.mapB.className = "orderButton";
+    this.mapB.innerHTML = "map";
+    this.mapB.onclick = () => {
+      this.map();
+    };
+
+    this.orderContainer2 = document.createElement("div");
+    this.orderContainer2.className = "orderContainer";
+
+    this.upB = document.createElement("div");
+    this.upB.className = "orderButton";
+    this.upB.innerHTML = "⮝";
+    this.upB.onclick = () => {
+      this.move(-1);
+    };
+
+    this.downB = document.createElement("div");
+    this.downB.className = "orderButton";
+    this.downB.innerHTML = "⮟";
+    this.downB.onclick = () => {
+      this.move(1);
+    };
+
+    this.orderContainer3 = document.createElement("div");
+    this.orderContainer3.className = "orderContainer";
+
+    this.addB = document.createElement("div");
+    this.addB.className = "orderButton";
+    this.addB.innerHTML = "add";
+    this.addB.onclick = () => {
+      this.add();
+    };
+
+    this.delB = document.createElement("div");
+    this.delB.className = "orderButton";
+    this.delB.innerHTML = "del";
+    this.delB.onclick = () => {
+      this.del();
+    };
+
+    this.orderContainer4 = document.createElement("div");
+    this.orderContainer4.className = "orderContainer";
+
+    this.lineB = document.createElement("div");
+    this.lineB.className = "orderButton";
+    this.lineB.innerHTML = "add Line";
+    this.lineB.onclick = () => {
+      this.line();
+    };
+
+    this.inpCont.appendChild(this.inpEl);
+
+    this.orderContainer1.appendChild(this.mapB);
+
+    this.orderContainer2.appendChild(this.upB);
+    this.orderContainer2.appendChild(this.downB);
+
+    this.orderContainer3.appendChild(this.addB);
+    this.orderContainer3.appendChild(this.delB);
+
+    this.orderContainer4.appendChild(this.lineB);
+
+    this.head.appendChild(this.orderContainer1);
+
+    this.head.appendChild(this.inpCont);
+
+    this.head.appendChild(this.orderContainer2);
+    this.head.appendChild(this.orderContainer3);
+    this.head.appendChild(this.orderContainer4);
+
+    this.parent._inputs[this._id] = {
+      elNum: this._elNum,
+      coordinates: [],
+      element: this,
+      order: this._num,
+      linebreak: false,
+    };
+  }
+
+  changeInput(el) {
+    this.parent.changeInput(el, this);
+  }
+
+  line() {
+    this.parent.linebreak(this);
+  }
+
+  del() {
+    this.parent.delInput(this);
+  }
+
+  add() {
+    this.parent.addInput(this);
+  }
+
+  move(direction) {
+    this.parent.moveInput(direction, this);
+  }
+
+  map() {
+    this.parent.centerMap(this);
+  }
+
+  confirm(res) {
+    this.parent.confirm(res, this);
+  }
+
+  get fea() {
+    return this._feature;
+  }
+
+  set fea(feature) {
+    this._feature = feature;
+  }
+
+  get order() {
+    return this.parent._inputs[this._id].order;
+  }
+
+  set order(num) {
+    this.parent._inputs[this._id].order = num;
+  }
+
+  get el() {
+    return this.head;
+  }
+
+  get input() {
+    return this.inpEl;
+  }
+
+  get key() {
+    return this._id;
+  }
+}
+
+class Routeframe {
+  constructor() {
+    this._url = "http://router.project-osrm.org";
+    this._params = {
+      service: "route",
+      version: "v1",
+      profile: "foot",
+      coordinates: "",
+      steps: false,
+      geometries: "geojson",
+      overview: "simplified",
+    };
+    this._paramSeparator = [
+      {
+        sep: "/",
+        list: ["service", "version", "profile", "coordinates"],
+        declare: false,
+      },
+      { sep: "", list: ["steps"], declare: true },
+      { sep: "&", list: ["geometries", "overview"], declare: true },
+    ];
+
+    this._opt = { overwrite: true };
+
+    this._inputs = {};
+    this._inputsNum = 0;
+
+    this.head = document.createElement("div");
+    this.head.className = "routeframe";
+
+    this.frame = document.createElement("div");
+    this.frame.className = "routeframe-frame";
+
+    this.start = new coordInput(this, 0, this.elNum());
+
+    this.end = new coordInput(this, 1, this.elNum());
+
+    this.createButton = document.createElement("button");
+    this.createButton.className = "mainButton mini";
+    this.createButton.innerHTML = "Create";
+    this.createButton.onclick = () => {
+      this.create();
+    };
+
+    const overwriteList = [
+      ["overwrite", true],
+      ["new", false],
+    ];
+    this.overwriteSelect = document.createElement("select");
+    for (let x of overwriteList) {
+      const opt = document.createElement("option");
+      if (this._opt.overwrite === x[0]) opt.selected = "selected";
+
+      opt.value = x[1];
+      opt.innerHTML = x[0];
+      this.overwriteSelect.appendChild(opt);
+    }
+    this.overwriteSelect.onchange = (e) => {
+      this.selectOpt(e, "overwrite");
+    };
+
+    this.swapButton = document.createElement("button");
+    this.swapButton.className = "mainButton mini";
+    this.swapButton.innerHTML = "Swap";
+    this.swapButton.onclick = () => {
+      this.swapAll();
+    };
+
+    const profileList = ["car", "bike", "foot"];
+    this.profileSelect = document.createElement("select");
+    for (let x of profileList) {
+      const opt = document.createElement("option");
+      if (this._params.profile === x) opt.selected = "selected";
+
+      opt.value = x;
+      opt.innerHTML = x;
+      this.profileSelect.appendChild(opt);
+    }
+    this.profileSelect.onchange = (e) => {
+      this.selectParams(e, "profile");
+    };
+
+    const overviewList = ["simplified", "full"];
+    this.overviewSelect = document.createElement("select");
+    for (let x of overviewList) {
+      const opt = document.createElement("option");
+      if (this._params.overview === x) opt.selected = "selected";
+
+      opt.value = x;
+      opt.innerHTML = x;
+      this.overviewSelect.appendChild(opt);
+    }
+    this.overviewSelect.onchange = (e) => {
+      this.selectParams(e, "overview");
+    };
+
+    this.closeButton = document.createElement("button");
+    this.closeButton.className = "mainButton mini";
+    this.closeButton.className = "closeButton";
+    this.closeButton.onclick = () => {
+      this.close();
+    };
+
+    new moveEl(this.head);
+
+    this.frame.appendChild(this.start.el);
+    this.frame.appendChild(this.end.el);
+
+    this.frame.appendChild(this.createButton);
+    this.frame.appendChild(this.overwriteSelect);
+
+    this.frame.appendChild(this.profileSelect);
+    this.frame.appendChild(this.overviewSelect);
+
+    this.frame.appendChild(this.swapButton);
+
+    this.frame.appendChild(this.closeButton);
+
+    this.head.appendChild(this.frame);
+    container1.appendChild(this.head);
+  }
+
+  changeInput(e, child) {
+    if (e.type == "keyup") {
+      searchPlace(e, child);
+    }
+  }
+
+  selectOpt(e, opt) {
+    this._opt[opt] = e.target.value;
+  }
+
+  selectParams(e, opt) {
+    this._params[opt] = e.target.value;
+  }
+
+  delInputFromFeature(fea) {
+    const child = this._inputs[fea.get("routeKey")].element;
+    this.delInput(child);
+  }
+
+  delInput(child) {
+    if (child.fea) {
+      layersDict["lay"]["track"].getSource().removeFeature(child.fea);
+      child.fea = null;
+    }
+
+    if (Object.keys(this._inputs).length <= 2) {
+      child.input.value = "";
+      child.input.placeholder = "";
+      child.input.style["pointer-events"] = "auto";
+
+      this._inputs[child.key].coordinates = [];
+      return false;
+    }
+
+    for (let key in this._inputs) {
+      const x = this._inputs[key];
+      if (x.order > this._inputs[child.key].order) x.order -= 1;
+    }
+
+    this.frame.removeChild(this._inputs[child.key].element.el);
+    delete this._inputs[child.key];
+  }
+
+  addInput(child) {
+    const num = this._inputs[child.key].order + 1;
+
+    for (let key in this._inputs) {
+      const x = this._inputs[key];
+      if (x.order >= num) x.order += 1;
+    }
+
+    const el = new coordInput(this, num, this.elNum());
+    this.frame.insertBefore(
+      el.el,
+      this._inputs[child.key].element.el.nextSibling
+    );
+
+    return el;
+  }
+
+  swapEl(el1, el2) {
+    let tempNum = el1.order;
+    el1.order = el2.order;
+    el2.order = tempNum;
+
+    let temp1 = document.createElement("span");
+    let temp2 = document.createElement("span");
+
+    this.frame.replaceChild(temp1, el1.el);
+    this.frame.replaceChild(temp2, el2.el);
+
+    this.frame.replaceChild(el1.el, temp2);
+    this.frame.replaceChild(el2.el, temp1);
+  }
+
+  moveInput(direction, child) {
+    let num = this._inputs[child.key].order + direction;
+
+    if (num < 0) num = Object.keys(this._inputs).length - 1;
+    if (num >= Object.keys(this._inputs).length) num = 0;
+
+    let swapElement = null;
+
+    for (let key in this._inputs) {
+      const x = this._inputs[key];
+      if (x.order === num) {
+        swapElement = x.element;
+      }
+    }
+
+    if (swapElement) this.swapEl(child, swapElement);
+  }
+
+  swapAll() {
+    let lengthArray = Object.keys(this._inputs).length;
+
+    let unsorted = new Array(lengthArray).fill(null);
+    let sorted = new Array(lengthArray).fill(null);
+    let doneList = new Array();
+
+    for (let key in this._inputs) {
+      const x = this._inputs[key];
+      const numSort = Math.abs(lengthArray - 1 - x.order);
+      if (numSort === x.order) continue;
+
+      unsorted[x.order] = x.element;
+      sorted[numSort] = x.order;
+    }
+
+    for (let i = 0; i < lengthArray; i++) {
+      if (unsorted[i] === null) continue;
+      if (doneList.includes(unsorted[sorted[i]].order)) continue;
+
+      this.swapEl(unsorted[i], unsorted[sorted[i]]);
+      doneList.push(unsorted[i].order);
+    }
+  }
+
+  linebreak(child) {
+    const el = this.addInput(child);
+
+    this._inputs[el.key].linebreak = true;
+    el.input.value = "";
+    el.input.placeholder = "—— Line between ↕ ——";
+    el.input.style["pointer-events"] = "none";
+  }
+
+  moveMarker(fea) {
+    const geo = fea.getGeometry().getCoordinates();
+    const child = this._inputs[fea.get("routeKey")].element;
+
+    this.addCoord(geo, child);
+  }
+
+  addMarker(geo, child) {
+    let fea = new ol.Feature({
+      geometry: new ol.geom.Point(geo),
+      name: `route`,
+      layer: "track",
+      routeKey: child.key,
+    });
+    fea.setStyle(createStyleRouteMarker());
+    layersDict["lay"]["track"].getSource().addFeature(fea);
+
+    child.fea = fea;
+
+    return fea;
+  }
+
+  centerMap(child) {
+    let center = viewT.getCenter();
+
+    if (child.fea) {
+      child.fea.getGeometry().setCoordinates(center);
+    } else {
+      this.addMarker(center, child);
+    }
+
+    this.addCoord(center, child);
+  }
+
+  addCoord(coord, child) {
+    const LonLat = ol.proj.toLonLat(coord);
+    this._inputs[child.key]["coordinates"] = LonLat;
+    this._inputs[child.key].linebreak = false;
+
+    const coordString = LonLat.map((x) => Math.round(x * 100) / 100).toString();
+
+    child.input.value = "";
+    child.input.placeholder = "Coord: " + coordString;
+    child.input.style["pointer-events"] = "none";
+  }
+
+  elNum() {
+    this._inputsNum++;
+    return this._inputsNum;
+  }
+
+  confirm(res, child) {
+    const geo = toCenter(res.geometry.coordinates);
+    if (child.fea) {
+      child.fea.getGeometry().setCoordinates(geo);
+    } else {
+      this.addMarker(geo, child);
+    }
+
+    this._inputs[child.key]["coordinates"] = res.geometry.coordinates;
+    this._inputs[child.key].linebreak = false;
+  }
+
+  createDel() {
+    let i = chartT.data.datasets.length - 1;
+    let last_ind = null;
+
+    for (let d = chartT.data.datasets.length; i < d && 0 <= i; i--) {
+      if (chartT.data.datasets[i].use === false) continue;
+
+      let ch = chartDict["indexToName"][i];
+      if (chartDict[ch] === "route") {
+        last_ind = i;
+        break;
+      }
+    }
+
+    if (last_ind !== null) {
+      i = 0;
+      let d = chartT.data.datasets[last_ind].data.length;
+      let last_ind_data = 0;
+      for (; i < d; i++) {
+        last_ind_data = d - 1 - i;
+        curSelChar = [last_ind, last_ind_data];
+        deleteHandler();
+      }
+    }
+  }
+
+  async create() {
+    const sortedList = new Array(Object.keys(this._inputs).length);
+    for (const x in this._inputs) {
+      sortedList[this._inputs[x].order] = this._inputs[x];
+    }
+
+    const coordinates = [[]];
+    let ind = 0;
+    for (const x of sortedList) {
+      if (x.linebreak) {
+        coordinates.push(new Array());
+        ind++;
+      } else {
+        if (x.coordinates.length > 0) {
+          coordinates[ind].push(x.coordinates);
+        }
+      }
+    }
+    let resList = [];
+    let waypoints = [];
+
+    for (let z = 0; z < coordinates.length; z++) {
+      if (coordinates[z].length === 0) continue;
+      else if (coordinates[z].length === 1) {
+        resList.push([coordinates[z][0]]);
+        waypoints.push(coordinates[z][0]);
+        continue;
+      }
+
+      let coordString = "";
+      for (let i = 0; i < coordinates[z].length; i++) {
+        if (coordinates[z][i].length > 1) {
+          coordString += coordinates[z][i].toString() + ";";
+        }
+      }
+      if (coordString === "") return false;
+
+      coordString = coordString.substring(0, coordString.length - 1) + "?";
+      this._params["coordinates"] = coordString;
+
+      let url = this._url;
+
+      for (let x of this._paramSeparator) {
+        for (let y of x.list) {
+          url += x.sep;
+          url += x.declare ? y + "=" + this._params[y] : this._params[y];
+        }
+      }
+
+      let res = await fetchRoute(url);
+      if (res.code == "Ok") {
+        resList.push(res["routes"][0]["geometry"]["coordinates"]);
+
+        for (let x of res["waypoints"]) {
+          waypoints.push(x.location);
+        }
+      }
+    }
+
+    if (resList.length > 0) {
+      if (this._opt["overwrite"]) this.createDel();
+
+      resList = resList.flat();
+      createRouteLayer(resList, waypoints);
+    }
+  }
+
+  open() {
+    container1.appendChild(this.head);
+  }
+
+  close() {
+    this.head.remove();
   }
 }
 
 function creatElGeoSource() {
-  new Sourceframe();
+  if (sourceframeDiv) {
+    sourceframeDiv.open();
+  } else {
+    sourceframeDiv = new Sourceframe();
+  }
 }
 
 function createTrackPoint() {
@@ -3355,6 +4488,278 @@ function moveTrackpoint(fea) {}
 function deleteTrackPoint(fea) {
   layersDict["lay"]["track"].getSource().removeFeature(fea);
   deselectChar();
+}
+
+function addRouteLayer(ff, route, waypoints) {
+  let num = Object.keys(chartDict["indexToName"]).length;
+  let nameL = `route${num + 1}`;
+
+  layersDict["chart"]["size"]++;
+  markerDict[nameL] = [];
+  chartDict["indexToName"][`${num + 1}`] = nameL;
+  chartDict["indexToData"][nameL] = num + 1;
+  chartDict[nameL] = "route";
+  sortedDict[nameL] = {
+    start: null,
+    end: null,
+  };
+  chartT.options.scales.y.min -= 2;
+  chartT.data.datasets[0].data[0].y = chartT.options.scales.y.min;
+  canvCon.style.height = `${(orgCanvHeight += chartSizeDict["add"])}px`;
+  chartT.data.datasets.push(
+    new optionlayer({
+      mapZ: num,
+      route: route,
+      waypoints: waypoints,
+    })
+  );
+
+  let numD = chartT.data.datasets.length - 1;
+  let laySource = new ol.source.Vector({
+    features: [],
+  });
+  let layLayer = new ol.layer.Vector({
+    source: laySource,
+    title: nameL,
+    zIndex: num,
+  });
+
+  let laySourceR = new ol.source.Vector({
+    features: [],
+  });
+  let layLayerR = new ol.layer.Vector({
+    className: "ol-layer-export" + " layer_" + nameL,
+    source: laySourceR,
+    title: nameL,
+    zIndex: num,
+  });
+
+  layersDict["lay"][nameL] = layLayer;
+  layersDict["lay"][nameL + "_ren"] = layLayerR;
+
+  map.addLayer(layLayer);
+  mapRender.addLayer(layLayerR);
+
+  laySource.clear();
+  let ffRen = ff.clone();
+  markerDict[nameL].push(ff);
+
+  setZlayers(layersDict["lay"]["map"].getZIndex());
+  let data = addKeyframe(
+    numD,
+    1 - (layersDict["chart"]["size"] - 1) * 2,
+    ff,
+    defaultLay["route"],
+    ffRen
+  );
+
+  data["name"] = "route";
+  data["title"] = nameL;
+  ff.set("chart", data);
+  ff.setStyle(
+    createStyleRoute(
+      data["colorstroke"],
+      data["opacitystroke"],
+      data["widthStroke"],
+      data["lineDash"],
+      data["lineCap"],
+      data["lineJoin"],
+      data["lineDashOffset"]
+    )
+  );
+
+  laySource.addFeatures([ff]);
+  laySourceR.addFeatures([ffRen]);
+  chartT.resize();
+  return num + 1;
+}
+
+function divideColor(da1, da2, step) {
+  const coldiff = { change: false, list: new Array(da1.length) };
+
+  coldiff["list"].fill(0);
+
+  for (let i = 0, n = da1.length; i < n; i++) {
+    const diff = (da2[i] - da1[i]) * step;
+    if (diff !== 0) coldiff["change"] = true;
+    coldiff["list"][i] = diff;
+  }
+
+  return coldiff;
+}
+
+function divideDash(da1, da2, step) {
+  let stDashlist = Array.isArray(da1) ? da1.slice(0) : [0];
+  let tarDashlist = Array.isArray(da2) ? da2.slice(0) : [0];
+
+  let last_ind = -1;
+  if (tarDashlist.length > stDashlist.length && stDashlist.length % 2 !== 0) {
+    if (stDashlist.length < 2) last_ind = 0;
+    stDashlist.push(stDashlist[last_ind]);
+  } else if (
+    tarDashlist.length < stDashlist.length &&
+    tarDashlist.length % 2 !== 0
+  ) {
+    if (tarDashlist.length < 2) last_ind = 0;
+    tarDashlist.push(tarDashlist[last_ind]);
+  }
+
+  const dashdiff = {
+    change: false,
+    st: stDashlist,
+    list: new Array(stDashlist.length),
+  };
+
+  dashdiff["list"].fill(0);
+
+  const dLength =
+    stDashlist.length <= tarDashlist.length
+      ? stDashlist.length
+      : tarDashlist.length;
+
+  for (let dInd = 0; dInd < dLength; dInd++) {
+    const lineDashdiff = (tarDashlist[dInd] - stDashlist[dInd]) * step;
+    if (lineDashdiff !== 0) dashdiff["change"] = true;
+    dashdiff["list"][dInd] = lineDashdiff;
+  }
+
+  return dashdiff;
+}
+
+function divideRoute(coord, pathAmount, st, end) {
+  let p0 = coord[0];
+
+  let pre = p0,
+    disttot = 0,
+    dist;
+  (distList = []), (distIntervals = { change: true, list: [] });
+
+  for (let i = 0, d = coord.length; i < d; i++) {
+    dist = Math.sqrt(
+      Math.pow(coord[i][0] - pre[0], 2) + Math.pow(coord[i][1] - pre[1], 2)
+    );
+
+    disttot += dist;
+    distList.push(disttot);
+    pre = coord[i];
+  }
+
+  const st1 = st[0],
+    st2 = end[0],
+    end1 = st[1],
+    end2 = end[1];
+
+  const stdiv = (st2 - st1) / pathAmount;
+  const enddiv = (end2 - end1) / pathAmount;
+
+  if (stdiv === 0 && enddiv === 0) {
+    distIntervals["change"] = false;
+  }
+
+  let z = 0,
+    d2 = distList.length,
+    stPre = null,
+    endPre = null;
+
+  const partdiv = (z1, z2, dist) => {
+    const sup = dist - distList[z1];
+    const supdist = sup / (distList[z2] - distList[z1]);
+
+    const x = coord[z1][0] + (coord[z2][0] - coord[z1][0]) * supdist;
+    const y = coord[z1][1] + (coord[z2][1] - coord[z1][1]) * supdist;
+
+    return [x, y];
+  };
+
+  for (let i = 0, d = pathAmount; i < d; i++) {
+    distIntervals["list"][i] = new Array();
+
+    stPre = null;
+    endPre = null;
+    let stPer = st1 + i * stdiv;
+    let endPer = end1 + i * enddiv;
+
+    let stdist = stPer * (disttot / 100);
+    let enddist = endPer * (disttot / 100);
+
+    for (z = 0; z < d2; z++) {
+      if (distList[z] >= stdist) {
+        if (stPre !== null) {
+          if (stPer < endPer) {
+            distIntervals["list"][i].push(partdiv(z, stPre, stdist));
+            stPre = null;
+          }
+        }
+
+        if (distList[z] <= enddist) {
+          distIntervals["list"][i].push(coord[z]);
+        } else {
+          if (endPre !== null) {
+            if (stPer < endPer) {
+              distIntervals["list"][i].push(partdiv(endPre, z, enddist));
+            }
+          }
+          break;
+        }
+      } else {
+        stPre = z;
+      }
+
+      endPre = z;
+    }
+  }
+  return distIntervals;
+}
+
+function createRoute() {
+  routeframeDiv ? routeframeDiv.open() : (routeframeDiv = new Routeframe());
+  return;
+}
+
+async function fetchRoute(url) {
+  let fileRes = await fetch(url);
+  fileRes = await fileRes.json();
+
+  return fileRes;
+}
+
+async function createRouteLayer(coord, waypoints) {
+  let feature = await new ol.format.GeoJSON().readFeature(
+    {
+      type: "Feature",
+      geometry: { coordinates: coord, type: "LineString" },
+      properties: {
+        name: "Route",
+      },
+    },
+    {
+      featureProjection: "EPSG:3857",
+    }
+  );
+
+  addRouteLayer(
+    feature,
+    coord.map((x) => ol.proj.fromLonLat(x)),
+    waypoints.map((x) => ol.proj.fromLonLat(x))
+  );
+}
+
+function mergeFeatures(Features) {
+  let multiGeo = [],
+    fea = null;
+
+  for (let i = 0, d = Features.length; i < d; i++) {
+    if (Features[i]) {
+      multiGeo.push(Features[i].getGeometry());
+      if (fea === null) fea = Features[i].clone();
+    }
+  }
+
+  if (fea !== null) {
+    fea.setGeometry(new ol.geom.GeometryCollection(multiGeo));
+  }
+
+  return fea;
 }
 
 function setAttributionText(text) {
@@ -3508,10 +4913,10 @@ const chartAreaBorder = {
 
 let searchTimeout;
 
-function searchPlace(e) {
+function searchPlace(e, par = null) {
   if (searchTimeout) clearTimeout(searchTimeout);
   searchTimeout = setTimeout(() => {
-    searchHandler(e);
+    searchHandler(e, par);
   }, 500);
 }
 
@@ -3567,8 +4972,8 @@ function changeFrame_s(e) {
   }
 }
 
-function searchHandler(e) {
-  const searchContEl = document.getElementById("searchCont");
+function searchHandler(e, par = null) {
+  const searchContEl = document.getElementById(e.target.parentNode.id);
 
   function removeTable() {
     searchContEl.querySelectorAll("td").forEach((el) => el.remove());
@@ -3605,8 +5010,14 @@ function searchHandler(e) {
       cell.innerHTML = fea.properties.name + `  [${fea.properties.type}]`;
       cell.onclick = (el) => {
         removeTable();
+        e.target.value = fea.properties.name;
         viewT.setCenter(toCenter(fea.geometry.coordinates));
-        viewT.setZoom(9);
+
+        if (par) {
+          par.confirm(fea);
+        } else {
+          viewT.setZoom(9);
+        }
       };
     }
     searchContEl.appendChild(contEl);
@@ -4243,12 +5654,68 @@ function Resizestop(e) {
   timeseq.progressBarDraw(chartT);
 }
 
+function moveEl(el) {
+  this.x = null;
+  this.y = null;
+
+  this.xEl = el.offsetLeft;
+  this.yEl = el.offsetTop;
+
+  const resizeKeywords = ["both", "horizontal", "vertical", "block", "inline"];
+
+  el.addEventListener("mousedown", (e) => {
+    this.mouseDownEv(e);
+  });
+
+  this.mouseDownEv = (e) => {
+    let marginResize = 30;
+
+    this.x = e.clientX;
+    this.y = e.clientY;
+
+    this.xEl = el.offsetLeft;
+    this.yEl = el.offsetTop;
+
+    canv.style["pointer-events"] = "none";
+
+    for (let key of resizeKeywords) {
+      if (window.getComputedStyle(el)["resize"] == key) {
+        if (
+          this.x - this.xEl + marginResize >= el.offsetWidth &&
+          this.y - this.yEl + marginResize >= el.offsetHeight
+        ) {
+          return;
+        }
+      }
+    }
+
+    window.addEventListener("mousemove", this.move, false);
+    window.addEventListener("mouseup", this.stop, false);
+  };
+
+  this.move = (e) => {
+    if (this.x === null || this.y === null) return;
+
+    el.style["margin"] = "0px";
+
+    el.style.left = this.xEl + (e.clientX - this.x) + "px";
+    el.style.top = this.yEl + (e.clientY - this.y) + "px";
+  };
+
+  this.stop = (e) => {
+    canv.style["pointer-events"] = "auto";
+    window.removeEventListener("mousemove", this.move, false);
+    window.removeEventListener("mouseup", this.stop, false);
+  };
+}
+
 canv.addEventListener("wheel", zoomWheel);
 resizeEW.addEventListener("mousedown", mouseDownEv);
 previewButton.addEventListener("click", previewClick);
 previewSwitchButton.addEventListener("click", previewcalc);
 sourceButton.addEventListener("click", creatElGeoSource);
 trackButton.addEventListener("click", createTrackPoint);
+routeButton.addEventListener("click", createRoute);
 
 zoomInput.addEventListener("keyup", changeInput);
 xInput.addEventListener("keyup", changeInput);
