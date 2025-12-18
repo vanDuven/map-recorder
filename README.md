@@ -1,11 +1,14 @@
 # Map recorder
 
-Make simple map tile animations and export it as an image sequence. 
+Make map tile animations and export it as an image sequence. 
 [Link](https://vanduven.github.io/map-recorder/)
 
 ![Map Animation](docs/rec.gif)
 
-Saves trackpoints and import them in Adobe After Effects: File > Scripts > Run Script File
+- Move, zoom and rotate between points.
+- Choose the tile url.
+- Add and animate GeoJSON and route paths.
+- Saves trackpoints and import them in Adobe After Effects: File > Scripts > Run Script File
 
 ### Built with
 

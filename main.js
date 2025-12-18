@@ -97,63 +97,64 @@ const XYZURLS = [
     },
   },
 
-  {
-    name: "stamen",
-    list: [
-      {
-        name: "terrain",
-        extension: "jpg",
-      },
-      {
-        name: "terrain-background",
-        extension: "jpg",
-      },
-      {
-        name: "terrain-labels",
-        extension: "png",
-      },
-      {
-        name: "terrain-lines",
-        extension: "png",
-      },
-      {
-        name: "toner-background",
-        extension: "png",
-      },
-      {
-        name: "toner",
-        extension: "png",
-      },
-      {
-        name: "toner-hybrid",
-        extension: "png",
-      },
-      {
-        name: "toner-labels",
-        extension: "png",
-      },
-      {
-        name: "toner-lines",
-        extension: "png",
-      },
-      {
-        name: "toner-lite",
-        extension: "png",
-      },
-      {
-        name: "watercolor",
-        extension: "jpg",
-      },
-    ],
-    url(v) {
-      return (
-        "https://stamen-tiles-{a-d}.a.ssl.fastly.net/" +
-        v.name +
-        "/{z}/{x}/{y}." +
-        v.extension
-      );
-    },
-  },
+  // stamen moved to stadia, account needed.
+  // {
+  //   name: "stamen",
+  //   list: [
+  //     {
+  //       name: "terrain",
+  //       extension: "jpg",
+  //     },
+  //     {
+  //       name: "terrain-background",
+  //       extension: "jpg",
+  //     },
+  //     {
+  //       name: "terrain-labels",
+  //       extension: "png",
+  //     },
+  //     {
+  //       name: "terrain-lines",
+  //       extension: "png",
+  //     },
+  //     {
+  //       name: "toner-background",
+  //       extension: "png",
+  //     },
+  //     {
+  //       name: "stamen_toner",
+  //       extension: "png",
+  //     },
+  //     {
+  //       name: "toner-hybrid",
+  //       extension: "png",
+  //     },
+  //     {
+  //       name: "toner-labels",
+  //       extension: "png",
+  //     },
+  //     {
+  //       name: "toner-lines",
+  //       extension: "png",
+  //     },
+  //     {
+  //       name: "toner-lite",
+  //       extension: "png",
+  //     },
+  //     {
+  //       name: "watercolor",
+  //       extension: "jpg",
+  //     },
+  //   ],
+  //   url(v) {
+  //     return (
+  //       "https://tiles.stadiamaps.com/tiles/" +
+  //       v.name +
+  //       "/{z}/{x}/{y}{r}." +
+  //       v.extension
+  //     );
+  //   },
+  // },
 
   {
     name: "CARTO",
@@ -1681,7 +1682,8 @@ class TimeSequence {
         if (exportOpt.hasOwnProperty("attribution")) {
           let frontScale = 1;
           if (rot) frontScale = _scaleRes;
-          mapContext.font = 12 * frontScale + "px serif";
+          mapContext.font = "normal normal 400 " + 12 * frontScale + "px/1.0 'Times New Roman', Times, serif";
+
           mapContext.fillText(
             exportOpt["attribution"],
             10 * frontScale,
@@ -1755,15 +1757,15 @@ function renderHandler(e) {
 
   const buttRenAll = document.createElement("div");
   buttRenAll.innerHTML = "Merge and all layers";
-  buttRenAll.className = "mainButton";
+  buttRenAll.className = "mainButton frameButton";
 
   const buttRenMerge = document.createElement("div");
   buttRenMerge.innerHTML = "Merge";
-  buttRenMerge.className = "mainButton";
+  buttRenMerge.className = "mainButton frameButton";
 
   renderHandlerDiv.appendChild(frameInnerText);
-  renderHandlerDiv.appendChild(buttRenAll);
   renderHandlerDiv.appendChild(buttRenMerge);
+  renderHandlerDiv.appendChild(buttRenAll);
   container1.appendChild(renderHandlerDiv);
 
   container1.style["pointer-events"] = "none";
@@ -1779,18 +1781,18 @@ function renderHandler(e) {
   new moveEl(renderHandlerDiv);
 
   this.waitFrame = function (opt) {
-    frameInnerText.innerHTML = "Rendering:";
+    frameInnerText.innerHTML = "Rendering and preparing for download... please wait:";
     renderHandlerDiv.removeChild(closeButton);
     renderHandlerDiv.removeChild(buttRenAll);
     renderHandlerDiv.removeChild(buttRenMerge);
 
     const buttRestart = document.createElement("div");
     buttRestart.innerHTML = "Restart";
-    buttRestart.className = "mainButton";
+    buttRestart.className = "mainButton frameButton";
 
     const buttAbort = document.createElement("div");
     buttAbort.innerHTML = "Abort";
-    buttAbort.className = "mainButton";
+    buttAbort.className = "mainButton frameButton";
 
     renderHandlerDiv.appendChild(buttRestart);
     renderHandlerDiv.appendChild(buttAbort);
@@ -1930,9 +1932,9 @@ function createStyle(text_string, border = "", trans = false) {
   });
 }
 let map = new ol.Map({
-  interactions: ol.interaction.defaults(),
+  interactions: ol.interaction.defaults.defaults(),
   target: "map",
-  controls: ol.control
+  controls: ol.control.defaults
     .defaults({
       attribution: false,
     })
@@ -1948,7 +1950,7 @@ map.addControl(new ol.control.ZoomSlider());
 
 let mapRender = new ol.Map({
   target: "rendermap",
-  controls: ol.control
+  controls: ol.control.defaults
     .defaults({
       attribution: false,
     })
@@ -2004,7 +2006,7 @@ function checkTimeMarker() {
 }
 
 map.on("click", function (e) {
-  map.forEachLayerAtPixel(e.pixel, function (sel) {});
+  // map.forEachLayerAtPixel(e.pixel, function (sel) {});
   map.forEachFeatureAtPixel(
     e.pixel,
     function (sel) {
@@ -2258,6 +2260,7 @@ function createInputDom(text, value, nameKey = "") {
   spanEl.innerHTML = text;
 
   let eventTrigger = "keyup";
+  let createAfter = [];
 
   const name = nameKey.split("_");
 
@@ -2269,19 +2272,48 @@ function createInputDom(text, value, nameKey = "") {
       tooltip.innerHTML =
         "Check the provider for the actual attribution and terms";
       spanEl.appendChild(tooltip);
+
     case "xyz":
       inpEl.value = value;
       inpEl.setAttribute("list", "xyz_urls");
       let datalist = document.createElement("datalist");
       datalist.id = "xyz_urls";
+
+      let dataSelectEl = document.createElement("select");
+      dataSelectEl.style["-webkit-appearance"] = "none";
+      dataSelectEl.style["text-align-last"] = "center";
+      dataSelectEl.style["width"] = "22px";
+
+      const arrowOpt = document.createElement("option");
+      arrowOpt.innerHTML = "&#9660";   
+      arrowOpt.value = '';
+      arrowOpt.disabled = true;
+      arrowOpt.selected = true;
+      arrowOpt.hidden = true;
+      dataSelectEl.appendChild(arrowOpt);  
+      
+      dataSelectEl.addEventListener('change', () => {
+        inpEl.value = dataSelectEl.value;
+        dataSelectEl.selectedIndex = 0;
+        const keyUpEvent = new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13 });
+        inpEl.dispatchEvent(keyUpEvent); 
+      });
+      
       for (let host of XYZURLS) {
         for (let x of host.list) {
           const opt = document.createElement("option");
           opt.value = host.url(x);
           datalist.appendChild(opt);
+
+          const optSelect = document.createElement("option");
+          optSelect.value = host.url(x);
+          optSelect.innerText = host.url(x);
+          dataSelectEl.appendChild(optSelect);
         }
       }
+
       wrapEl.appendChild(datalist);
+      createAfter.push(dataSelectEl);
       break;
 
     case "lineDash":
@@ -2324,6 +2356,9 @@ function createInputDom(text, value, nameKey = "") {
 
   wrapEl.appendChild(spanEl);
   wrapEl.appendChild(inpEl);
+  for(let x of createAfter){
+    wrapEl.appendChild(x);
+  }
 
   valuePannel.appendChild(wrapEl);
 
@@ -2607,7 +2642,7 @@ function moveMarkerLine(data) {
 }
 
 function translatingHandler(e) {
-  for (let fea of e.features.R) {
+  for (let fea of e.features.array_) {
     let layer = fea.get("layer");
     if (layer === "map") {
       let data = fea.get("chart");
@@ -4992,8 +5027,9 @@ function searchHandler(e, par = null) {
 
   url = url + "?";
   Object.keys(params).forEach(function (key) {
-    url += "&" + key + "=" + params[key];
+    url += key + "=" + params[key] + "&";
   });
+  url = url.substring(0, url.length - 1);
   fetch(url)
     .then((response) => response.json())
     .then((response) => nextList(response.features));
@@ -5149,7 +5185,8 @@ function drawPannel(chart) {
   canvSelCtx.fillStyle = styleChart["main_pannel"];
   canvSelCtx.fillRect(0, 0, canvSel.width, canvSel.height);
 
-  canvSelCtx.font = "16px serif";
+  canvSelCtx.font = "normal normal 400 16px/1.0 'Times New Roman', Times, serif";
+
   for (let i in chart.boxes[box_y]._gridLineItems) {
     if (i == 0 || chart.boxes[box_y]._gridLineItems.length - 1 == i) {
       la.push(chart.boxes[box_y]._gridLineItems[i]["y1"]);
@@ -5174,7 +5211,8 @@ function drawPannel(chart) {
     if (dataset.use === false) continue;
     let ch = chartDict["indexToName"][String(i)];
 
-    canvSelCtx.font = "16px serif";
+    canvSelCtx.font = "normal normal 400 16px/1.0 'Times New Roman', Times, serif";
+
     canvSelCtx.fillStyle = "black";
     canvSelCtx.fillText(ch, 20, la[z] - (la[z] - la[z + 1]) / 2 - 13);
     let boxEl = {
@@ -5210,7 +5248,7 @@ function drawPannel(chart) {
     canvSelCtx.fillStyle = "black";
     elem = null;
 
-    canvSelCtx.font = "16px serif";
+    canvSelCtx.font = "normal normal 400 16px/1.0 'Times New Roman', Times, serif";
     canvSelCtx.fillText("add keyframe", canvSel.width - 93, la[z + 1] - 17);
 
     if (z > 0) {
